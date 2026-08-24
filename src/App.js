@@ -280,7 +280,11 @@ function App() {
   // ── Autenticación ────────────────────────────────────────────
   const [token, setToken] = useState(localStorage.getItem("bf_token") || "");
   const [autenticado, setAutenticado] = useState(false);
-  const [tokenInput, setTokenInput] = useState("");
+  const [nombreUsuario, setNombreUsuario] = useState(localStorage.getItem("bf_nombre") || "");
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [nombreInput, setNombreInput] = useState("");
+  const [modoRegistro, setModoRegistro] = useState(false);
   const [loginError, setLoginError] = useState("");
   // loginChecking=true mientras verificamos el token guardado en localStorage
   const [loginChecking, setLoginChecking] = useState(
@@ -321,21 +325,60 @@ function App() {
   // El ticket seleccionado se deriva del estado — se mantiene sincronizado con el polling
   const ticketSeleccionado = selectedId ? tickets[selectedId] : null;
 
-  // ── Login ────────────────────────────────────────────────────
+  // ── Login / Registro ─────────────────────────────────────────
+  const _guardarSesion = (t, nombre) => {
+    localStorage.setItem("bf_token", t);
+    localStorage.setItem("bf_nombre", nombre);
+    setToken(t);
+    setNombreUsuario(nombre);
+    setAutenticado(true);
+    setLoginError("");
+  };
+
   const login = async () => {
-    const t = tokenInput.trim();
-    if (!t) return;
+    const email = emailInput.trim().toLowerCase();
+    const password = passwordInput;
+    if (!email || !password) return;
     try {
-      const res = await fetch(`${API}/stats`, {
-        headers: { Authorization: `Bearer ${t}` },
+      const res = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
       });
+      const data = await res.json();
       if (res.ok) {
-        localStorage.setItem("bf_token", t);
-        setToken(t);
-        setAutenticado(true);
-        setLoginError("");
+        _guardarSesion(data.token, data.nombre);
       } else {
-        setLoginError("Token inválido. Contacta al administrador de TI.");
+        setLoginError(data.detail || "Correo o contraseña incorrectos.");
+      }
+    } catch {
+      setLoginError("No se pudo conectar con el servidor.");
+    }
+  };
+
+  const registro = async () => {
+    const email = emailInput.trim().toLowerCase();
+    const password = passwordInput;
+    const nombre = nombreInput.trim();
+    if (!email || !password || !nombre) {
+      setLoginError("Completa todos los campos.");
+      return;
+    }
+    if (password.length < 6) {
+      setLoginError("La contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/auth/registro`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, nombre }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        _guardarSesion(data.token, data.nombre);
+      } else {
+        setLoginError(data.detail || "Error al registrar.");
       }
     } catch {
       setLoginError("No se pudo conectar con el servidor.");
@@ -344,7 +387,9 @@ function App() {
 
   const logout = () => {
     localStorage.removeItem("bf_token");
+    localStorage.removeItem("bf_nombre");
     setToken("");
+    setNombreUsuario("");
     setAutenticado(false);
     setTickets({});
     setStats({ total: 0, abiertos: 0, cerrados: 0 });
@@ -797,8 +842,9 @@ function App() {
     );
   }
 
-  /* ── Pantalla: login ─────────────────────────────────────────── */
+  /* ── Pantalla: login / registro ──────────────────────────────── */
   if (!autenticado) {
+    const submitAuth = modoRegistro ? registro : login;
     return (
       <div className="bf-app bf-login-wrap">
         <style>{CSS}</style>
@@ -806,24 +852,48 @@ function App() {
           <div className="bf-logo-box">b</div>
           <h1 className="bf-login-title">bioflex</h1>
           <p className="bf-login-sub">
-            Mesa de Soporte TI — Acceso restringido
+            {modoRegistro ? "Crear cuenta — Mesa de Soporte TI" : "Mesa de Soporte TI — Acceso restringido"}
           </p>
+          {modoRegistro && (
+            <input
+              type="text"
+              className="bf-login-input"
+              placeholder="Nombre completo"
+              value={nombreInput}
+              onChange={(e) => setNombreInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+            />
+          )}
+          <input
+            type="email"
+            className="bf-login-input"
+            placeholder="Correo electrónico"
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+            autoFocus={!modoRegistro}
+          />
           <input
             type="password"
             className="bf-login-input"
-            placeholder="Token de acceso"
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && login()}
-            autoFocus
+            placeholder="Contraseña"
+            value={passwordInput}
+            onChange={(e) => setPasswordInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitAuth()}
           />
           {loginError && <p className="bf-login-error">{loginError}</p>}
           <button
             className="bf-resolve"
             style={{ width: "100%", marginTop: 4 }}
-            onClick={login}
+            onClick={submitAuth}
           >
-            Entrar
+            {modoRegistro ? "Crear cuenta" : "Entrar"}
+          </button>
+          <button
+            style={{ background: "none", border: "none", color: "#607d8b", fontSize: 12, marginTop: 12, cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => { setModoRegistro(m => !m); setLoginError(""); }}
+          >
+            {modoRegistro ? "¿Ya tienes cuenta? Inicia sesión" : "¿Primera vez? Crear cuenta"}
           </button>
         </div>
       </div>
