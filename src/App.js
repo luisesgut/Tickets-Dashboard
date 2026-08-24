@@ -278,9 +278,7 @@ const IcLogout = (p) => (
    ────────────────────────────────────────────────────────────── */
 function App() {
   // ── Autenticación ────────────────────────────────────────────
-  const [token, setToken] = useState(localStorage.getItem("bf_token") || "");
   const [autenticado, setAutenticado] = useState(false);
-  const [nombreUsuario, setNombreUsuario] = useState(localStorage.getItem("bf_nombre") || "");
   const [emailInput, setEmailInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [nombreInput, setNombreInput] = useState("");
@@ -329,8 +327,6 @@ function App() {
   const _guardarSesion = (t, nombre) => {
     localStorage.setItem("bf_token", t);
     localStorage.setItem("bf_nombre", nombre);
-    setToken(t);
-    setNombreUsuario(nombre);
     setAutenticado(true);
     setLoginError("");
   };
@@ -388,8 +384,6 @@ function App() {
   const logout = () => {
     localStorage.removeItem("bf_token");
     localStorage.removeItem("bf_nombre");
-    setToken("");
-    setNombreUsuario("");
     setAutenticado(false);
     setTickets({});
     setStats({ total: 0, abiertos: 0, cerrados: 0 });
@@ -405,11 +399,9 @@ function App() {
     fetch(`${API}/stats`, { headers: { Authorization: `Bearer ${saved}` } })
       .then((r) => {
         if (r.ok) {
-          setToken(saved);
           setAutenticado(true);
         } else {
           localStorage.removeItem("bf_token");
-          setToken("");
         }
       })
       .catch(() => {})
