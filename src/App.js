@@ -1097,6 +1097,12 @@ function App() {
                         <EstadoBadge estado={ticket.estado} />
                       </div>
 
+                      {(ticket.area || ticket.maquina) && (
+                        <span className="bf-card-ubicacion">
+                          {[ticket.area, ticket.maquina].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
+
                       <p className="bf-card-preview">
                         {ultimoMensaje(ticket)}
                       </p>
@@ -1227,6 +1233,14 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
       {/* Meta grid */}
       <div className="bf-meta-grid">
         <div className="bf-meta">
+          <span className="bf-meta-k">Área</span>
+          <span className="bf-meta-v">{ticket.area || "—"}</span>
+        </div>
+        <div className="bf-meta">
+          <span className="bf-meta-k">Máquina</span>
+          <span className="bf-meta-v">{ticket.maquina || "—"}</span>
+        </div>
+        <div className="bf-meta">
           <span className="bf-meta-k"><IcPhone size={13} /> Usuario</span>
           <span className="bf-meta-v">+{ticket.numero}</span>
         </div>
@@ -1246,7 +1260,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
           <span className="bf-meta-k">Canal</span>
           <span className="bf-meta-v" style={{ textTransform: "capitalize" }}>{ticket.canal || "whatsapp"}</span>
         </div>
-        <div className="bf-meta">
+        <div className="bf-meta" style={{ gridColumn: "span 2" }}>
           <span className="bf-meta-k">Prioridad</span>
           <span className="bf-meta-v">
             <select
@@ -2336,6 +2350,7 @@ const CSS = `
 .bf-card.is-selected{border-color:${C.naranja};background:rgba(208,100,48,0.04);box-shadow:0 0 0 1px ${C.naranja} inset}
 .bf-card-top{display:flex;justify-content:space-between;align-items:center}
 .bf-card-id{font-size:14px;font-weight:700;color:${C.azulDark}}
+.bf-card-ubicacion{align-self:flex-start;font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:${C.azulDark};background:${C.surfaceAlt};border:1px solid ${C.border};border-radius:999px;padding:3px 9px}
 .bf-card-preview{
   font-size:13px;color:${C.textMuted};margin:9px 0 12px;line-height:1.45;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
