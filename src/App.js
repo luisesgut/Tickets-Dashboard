@@ -734,6 +734,24 @@ function App() {
     }
   };
 
+  const eliminarTicket = async (id) => {
+    const currentToken = localStorage.getItem("bf_token");
+    try {
+      const res = await fetch(`${API}/tickets/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${currentToken}` },
+      });
+      if (!res.ok) {
+        console.error("Error al eliminar ticket", res.status);
+        return;
+      }
+      setSelectedId(null);   // el detalle apunta a un ticket que ya no existe
+      fetchData();
+    } catch (e) {
+      console.error("Error al eliminar ticket", e);
+    }
+  };
+
   const cerrarTicket = async (id) => {
     const currentToken = localStorage.getItem("bf_token");
     try {
@@ -1162,6 +1180,7 @@ function App() {
                 onAsignar={asignarTicket}
                 onResolver={cerrarTicket}
                 onTransicionar={transicionarTicket}
+                onEliminar={eliminarTicket}
                 onPatch={patchTicket}
                 onEnviarMensaje={enviarMensaje}
               />
@@ -1188,7 +1207,7 @@ function EstadoBadge({ estado }) {
   );
 }
 
-function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAsignar, onTransicionar, onPatch, onEnviarMensaje }) {
+function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAsignar, onTransicionar, onEliminar, onPatch, onEnviarMensaje }) {
   const [notas, setNotas] = useState(ticket.notas_internas || "");
   const [pasos, setPasos] = useState(ticket.pasos_intentados || "");
   const [prioridad, setPrioridad] = useState(ticket.prioridad || "normal");
@@ -1460,6 +1479,23 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
           </div>
         </div>
       )}
+
+      {/* Zona peligrosa: borrar es irreversible, no deja rastro ni en auditoría */}
+      <div className="bf-danger-zone">
+        <button
+          className="bf-danger-btn"
+          onClick={() => {
+            if (window.confirm(
+              `¿Eliminar el ticket ${ticket.id} para siempre?\n\n` +
+              `Se borran también su historial de cambios y sus fotos. ` +
+              `No se puede deshacer.\n\n` +
+              `Si solo quieres sacarlo de la lista, usa "Archivar".`
+            )) onEliminar(ticket.id);
+          }}
+        >
+          <IcTrash size={14} /> Eliminar ticket
+        </button>
+      </div>
     </>
   );
 }
@@ -2385,6 +2421,9 @@ const CSS = `
 .bf-icon-btn{width:34px;height:34px;border-radius:10px;border:1px solid ${C.border};background:${C.surface};color:${C.textMuted};cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .bf-icon-btn:hover{background:${C.surfaceAlt};color:${C.azulDark}}
 
+.bf-danger-zone{margin-top:22px;padding-top:16px;border-top:1px solid ${C.border};display:flex;justify-content:flex-end}
+.bf-danger-btn{display:flex;align-items:center;gap:7px;padding:8px 14px;border-radius:10px;border:1px solid #E3B9B9;background:transparent;color:#B4534F;font-size:12.5px;font-weight:600;cursor:pointer;transition:all .15s}
+.bf-danger-btn:hover{background:#B4534F;border-color:#B4534F;color:#fff}
 .bf-meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:${C.border};border:1px solid ${C.border};border-radius:14px;overflow:hidden;margin-bottom:16px}
 .bf-descripcion{margin-bottom:18px;padding:14px 16px;background:${C.surfaceAlt};border:1px solid ${C.border};border-radius:14px}
 .bf-desc-text{font-size:13.5px;color:${C.text};line-height:1.6;white-space:pre-wrap}
