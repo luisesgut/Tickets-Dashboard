@@ -58,6 +58,37 @@ Exceptions that manage their own indicator: the header's Sincronizar button (`sy
 `bf-spin`) and per-step image uploads in EditorGuia (`subiendoImgPasoId`, so only the step
 being uploaded spins).
 
+### Casos activos: the queue model
+
+The tickets view is a **work queue grouped by urgency**, not a chronological list.
+`grupoDe(t)` assigns every ticket to exactly one group — the order of its `if`s is the rule:
+
+| group | rule |
+|---|---|
+| `sin_atender` | active and `!asignado_a` — nobody owns it |
+| `esperando` | assigned and `WAITING_FOR_USER` |
+| `en_progreso` | assigned, any other active state |
+| `resueltos` | terminal state |
+
+`filtro` holds the **focused** group (default `sin_atender`). The list renders all four:
+the focused one uses `<FilaExpandida>` (age, machine, inline Tomar/Asignar/Recordar), the
+rest collapse to `<FilaCompacta>` one-liners capped at 4 with a "ver los N restantes".
+Clicking any group header focuses it.
+
+**Waiting time is the primary metric.** `edadMs`/`textoEdad`/`colorEdad` read `fecha_iso`
+(UTC, from `Ticket.fecha`) — never the display string `fecha`, which renders UTC as if it
+were local. `colorEdad` ramps amber → orange → red at 1 h and 4 h. A 30-second `ahora`
+tick keeps the ages moving without any network call.
+
+The **sidebar is a filter rail, not navigation**: the four groups with counts, area chips
+built from active tickets (`areaFiltro`), and per-agent load bars. Guías/Configuración
+moved to a secondary footer block. There are no KPI cards — the counts live in the rail,
+and `GET /stats` is no longer fetched on sync.
+
+**"Tomar yo"** appears only when `localStorage.bf_nombre` matches an agent's `nombre`
+(`miAgenteId`); dashboard users and the `agentes` table are separate, so the match is by
+name and the button simply hides when there is none. `Asignar a…` always works.
+
 ### Sync model (sentinel polling)
 
 `fetchData()` is no longer on a blind 10-second timer. Every `POLL_MS` the app hits

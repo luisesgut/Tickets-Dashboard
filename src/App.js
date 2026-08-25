@@ -61,10 +61,69 @@ const ultimoMensaje = (t) => {
 // Cada cuánto se le pregunta al centinela si algo cambió.
 const POLL_MS = 10000;
 
+/* ── Antigüedad de un ticket ──────────────────────────────────────
+   `fecha_iso` viene en UTC desde el backend (Ticket.fecha usa utcnow).
+   El tiempo de espera es el dato que manda esta pantalla, así que se
+   calcula y se colorea aquí, no en cada componente. */
+const UNA_HORA = 60 * 60 * 1000;
+const ESCALA_EDAD = [
+  { max: UNA_HORA,     color: "#B5781C" }, // menos de 1 h — recién llegado
+  { max: 4 * UNA_HORA, color: "#A04E28" }, // menos de 4 h — ya pesa
+  { max: Infinity,     color: "#B01A30" }, // 4 h o más   — urgente
+];
+
+const edadMs = (t, ahora = Date.now()) => {
+  if (!t?.fecha_iso) return null;
+  const ms = ahora - new Date(t.fecha_iso).getTime();
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+};
+
+const textoEdad = (ms) => {
+  if (ms == null) return "—";
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "ahora";
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h`;
+  return `${Math.floor(h / 24)} d`;
+};
+
+const colorEdad = (ms) =>
+  ms == null ? "#90A6A4" : ESCALA_EDAD.find((n) => ms < n.max).color;
+
+const esDeHoy = (iso) => {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const hoy = new Date();
+  return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth()
+    && d.getDate() === hoy.getDate();
+};
+
+/* ── Grupos de la cola de trabajo ─────────────────────────────────
+   Cada ticket cae en exactamente uno; el orden de los ifs es la regla. */
+const grupoDe = (t) => {
+  if (ESTADOS_TERMINALES_SET.has(t.estado)) return "resueltos";
+  if (!t.asignado_a) return "sin_atender";
+  if (t.estado === "WAITING_FOR_USER") return "esperando";
+  return "en_progreso";
+};
+
+const GRUPOS = [
+  { id: "sin_atender", label: "Sin atender",          dot: "#D06430",
+    sub: "Nadie los ha tomado todavía" },
+  { id: "en_progreso", label: "En progreso",          dot: "#85B6C4",
+    sub: "Con agente asignado" },
+  { id: "esperando",   label: "Esperando al usuario", dot: "#E2A343",
+    sub: "La pelota está del lado del operador" },
+  { id: "resueltos",   label: "Resueltos",            dot: "#4F9089",
+    sub: "Cerrados, del más reciente al más viejo" },
+];
+
 const TITULOS = {
-  todos: "Bandeja de entrada",
-  abierto: "Casos activos",
-  cerrado: "Casos resueltos",
+  sin_atender: "Sin atender",
+  en_progreso: "En progreso",
+  esperando: "Esperando al usuario",
+  resueltos: "Resueltos",
 };
 
 const ESTADOS_ACTIVOS_SET = new Set(["OPEN","ASSIGNED","IN_PROGRESS","WAITING_FOR_USER","REOPENED"]);
@@ -129,21 +188,6 @@ const Icon = ({ d, size = 18, stroke = "currentColor", fill = "none", ...p }) =>
     {d}
   </svg>
 );
-const IcInbox = (p) => (
-  <Icon
-    {...p}
-    d={
-      <>
-        <path d="M22 12h-6l-2 3h-4l-2-3H2" />
-        <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-      </>
-    }
-  />
-);
-const IcPulse = (p) => (
-  <Icon {...p} d={<path d="M22 12h-4l-3 9L9 3l-3 9H2" />} />
-);
-const IcCheck = (p) => <Icon {...p} d={<path d="M20 6 9 17l-5-5" />} />;
 const IcCheckCircle = (p) => (
   <Icon
     {...p}
@@ -359,12 +403,13 @@ function App() {
   // ── Estado del dashboard ─────────────────────────────────────
   const [vista, setVista] = useState("tickets"); // "tickets" | "guias"
   const [tickets, setTickets] = useState({});
-  const [stats, setStats] = useState({ total: 0, abiertos: 0, cerrados: 0 });
   const [agentes, setAgentes] = useState({});
   const [selectedId, setSelectedId] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState("todos");
+  const [filtro, setFiltro] = useState("sin_atender"); // grupo enfocado de la cola
+  const [areaFiltro, setAreaFiltro] = useState(null);  // área de planta o null
+  const [ahora, setAhora] = useState(Date.now());      // hace latir los "hace X"
   const [busqueda, setBusqueda] = useState("");
   const [syncing, setSyncing] = useState(false);
 
@@ -462,7 +507,6 @@ function App() {
     localStorage.removeItem("bf_nombre");
     setAutenticado(false);
     setTickets({});
-    setStats({ total: 0, abiertos: 0, cerrados: 0 });
   };
 
   // Verificar token guardado en localStorage al montar la app
@@ -486,10 +530,14 @@ function App() {
 
   // ── Permisos de notificación ──────────────────────────────────
   useEffect(() => {
-    if (autenticado && "Notification" in window && Notification.permission === "default") {
+    // La segunda condición también necesita la guarda: sin ella, un navegador
+    // sin la API de notificaciones tira toda la app al montar.
+    if (!autenticado || !("Notification" in window)) return;
+    if (Notification.permission === "default") {
       Notification.requestPermission().then(p => { notifGranted.current = p === "granted"; });
+    } else if (Notification.permission === "granted") {
+      notifGranted.current = true;
     }
-    if (autenticado && Notification.permission === "granted") notifGranted.current = true;
   }, [autenticado]);
 
   // ── Audit log ────────────────────────────────────────────────
@@ -760,9 +808,8 @@ function App() {
     setSyncing(true);
     try {
       const headers = { Authorization: `Bearer ${currentToken}` };
-      const [ticketsRes, statsRes, agentesRes, versionRes] = await Promise.all([
+      const [ticketsRes, agentesRes, versionRes] = await Promise.all([
         fetch(`${API}/tickets`, { headers }).then((r) => r.json()),
-        fetch(`${API}/stats`, { headers }).then((r) => r.json()),
         fetch(`${API}/agentes`, { headers }).then((r) => r.json()),
         fetch(`${API}/tickets/version`, { headers }).then((r) => r.json()).catch(() => null),
       ]);
@@ -771,7 +818,6 @@ function App() {
       if (versionRes?.v) versionRef.current = versionRes.v;
       const nuevosTickets = ticketsRes.tickets || ticketsRes || {};
       setTickets(nuevosTickets);
-      setStats(statsRes || { total: 0, abiertos: 0, cerrados: 0 });
       setAgentes(agentesRes || {});
 
       // Notificaciones: detectar tickets OPEN nuevos sin asignar
@@ -888,74 +934,64 @@ function App() {
     };
   }, [autenticado]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const t = setInterval(() => setAhora(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
   /* Derivados ─────────────────────────────────────────────────── */
   const arr = useMemo(() => Object.values(tickets || {}), [tickets]);
-  const nAbiertos = arr.filter((t) => ESTADOS_ACTIVOS_SET.has(t.estado)).length;
-  const nCerrados = arr.filter((t) => ESTADOS_TERMINALES_SET.has(t.estado)).length;
-  const nSinAsignar = arr.filter(
-    (t) => ESTADOS_ACTIVOS_SET.has(t.estado) && !t.asignado_a
-  ).length;
 
-  const visibles = useMemo(() => {
+  // Todo lo que la barra lateral necesita, en una sola pasada.
+  const cola = useMemo(() => {
+    const porGrupo = { sin_atender: [], en_progreso: [], esperando: [], resueltos: [] };
+    const porArea = {};
+    const porAgente = {};
+    let resueltosHoy = 0;
+
+    arr.forEach((t) => {
+      porGrupo[grupoDe(t)].push(t);
+      if (ESTADOS_ACTIVOS_SET.has(t.estado)) {
+        const a = t.area || "Sin área";
+        porArea[a] = (porArea[a] || 0) + 1;
+        if (t.asignado_a) porAgente[t.asignado_a] = (porAgente[t.asignado_a] || 0) + 1;
+      } else if (esDeHoy(t.fecha_cierre_iso)) {
+        resueltosHoy += 1;
+      }
+    });
+
+    // Sin atender y esperando: primero el que lleva más tiempo, que es el que duele.
+    porGrupo.sin_atender.sort((a, b) => (edadMs(b, ahora) || 0) - (edadMs(a, ahora) || 0));
+    porGrupo.esperando.sort((a, b) => (edadMs(b, ahora) || 0) - (edadMs(a, ahora) || 0));
+    porGrupo.en_progreso.sort((a, b) => (edadMs(b, ahora) || 0) - (edadMs(a, ahora) || 0));
+    porGrupo.resueltos.sort((a, b) =>
+      String(b.fecha_cierre_iso || "").localeCompare(String(a.fecha_cierre_iso || "")));
+
+    return { porGrupo, porArea, porAgente, resueltosHoy };
+  }, [arr, ahora]);
+
+  // Búsqueda y filtro de área se aplican a los cuatro grupos por igual.
+  const gruposVisibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    return arr
-      .filter((t) => {
-        if (filtro === "todos") return true;
-        if (filtro === "abierto") return ESTADOS_ACTIVOS_SET.has(t.estado);
-        if (filtro === "cerrado") return ESTADOS_TERMINALES_SET.has(t.estado);
-        return true;
-      })
-      .filter((t) =>
-        !q
-          ? true
-          : String(t.numero).includes(q) ||
-            String(t.id).toLowerCase().includes(q)
-      )
-      .sort((a, b) =>
-        ESTADOS_ACTIVOS_SET.has(a.estado) === ESTADOS_ACTIVOS_SET.has(b.estado)
-          ? 0
-          : ESTADOS_ACTIVOS_SET.has(a.estado) ? -1 : 1
-      );
-  }, [arr, filtro, busqueda]);
+    const pasa = (t) =>
+      (!areaFiltro || t.area === areaFiltro) &&
+      (!q || String(t.numero).includes(q) ||
+        String(t.id).toLowerCase().includes(q) ||
+        String(t.maquina || "").toLowerCase().includes(q) ||
+        String(t.area || "").toLowerCase().includes(q));
+    const out = {};
+    Object.entries(cola.porGrupo).forEach(([k, v]) => { out[k] = v.filter(pasa); });
+    return out;
+  }, [cola, busqueda, areaFiltro]);
 
-  const navItems = [
-    { id: "todos",   label: "Bandeja",        icon: IcInbox,    count: arr.length,   vista: "tickets" },
-    { id: "abierto", label: "Activos",         icon: IcPulse,    count: nAbiertos,    vista: "tickets" },
-    { id: "cerrado", label: "Resueltos",       icon: IcCheck,    count: nCerrados,    vista: "tickets" },
-    { id: "guias",   label: "Guías",           icon: IcBook,     count: guias.length, vista: "guias" },
-    { id: "config",  label: "Configuración",   icon: IcSettings, count: null,         vista: "config" },
-  ];
+  const totalVisibles = Object.values(gruposVisibles).reduce((n, v) => n + v.length, 0);
+  const masViejoSinAtender = gruposVisibles.sin_atender[0];
 
-  const kpis = [
-    {
-      label: "Total recibidos",
-      value: stats.total ?? arr.length,
-      color: C.azulDark,
-      tint: "rgba(21,62,62,0.08)",
-      icon: IcInbox,
-    },
-    {
-      label: "Casos activos",
-      value: stats.abiertos ?? nAbiertos,
-      color: C.amarillo,
-      tint: C.openBg,
-      icon: IcPulse,
-    },
-    {
-      label: "Resueltos",
-      value: stats.cerrados ?? nCerrados,
-      color: C.doneText,
-      tint: C.doneBg,
-      icon: IcCheckCircle,
-    },
-    {
-      label: "Sin asignar",
-      value: nSinAsignar,
-      color: C.rojo,
-      tint: C.urgentBg,
-      icon: IcUser,
-    },
-  ];
+  // "Tomar yo" solo aparece si el usuario del dashboard coincide con un agente.
+  const nombreSesion = (localStorage.getItem("bf_nombre") || "").trim().toLowerCase();
+  const miAgenteId = Object.entries(agentes).find(
+    ([, a]) => (a.nombre || "").trim().toLowerCase() === nombreSesion
+  )?.[0] || null;
 
   /* ── Pantalla: verificando token guardado ────────────────────── */
   if (loginChecking) {
@@ -1046,61 +1082,109 @@ function App() {
           </div>
         </div>
 
-        <nav className="bf-nav">
-          {navItems.map((item) => {
-            const active = vista === item.vista && (item.vista !== "tickets" || filtro === item.id);
+        {/* La cola de trabajo ES la navegación: cada grupo es un filtro. */}
+        <div className="bf-side-label" style={{ paddingTop: 4 }}>Cola de trabajo</div>
+        <nav className="bf-cola">
+          {GRUPOS.map((g) => {
+            const n = g.id === "resueltos" ? cola.resueltosHoy : cola.porGrupo[g.id].length;
+            const activo = vista === "tickets" && filtro === g.id;
+            const urgente = g.id === "sin_atender" && n > 0;
             return (
               <button
-                key={item.id}
-                className={`bf-nav-item${active ? " is-active" : ""}`}
-                onClick={() => {
-                  setVista(item.vista);
-                  if (item.vista === "tickets") setFiltro(item.id);
-                }}
+                key={g.id}
+                className={`bf-cola-item${activo ? " is-active" : ""}${urgente ? " is-urgente" : ""}`}
+                onClick={() => { setVista("tickets"); setFiltro(g.id); }}
               >
-                <item.icon size={18} />
-                <span>{item.label}</span>
-                {item.count !== null && (
-                  <span className="bf-nav-count">{item.count}</span>
-                )}
+                <span className="bf-cola-dot" style={{ background: g.dot }} />
+                <span className="bf-cola-label">{g.label}</span>
+                <span className="bf-cola-count">{n}</span>
               </button>
             );
           })}
         </nav>
 
+        {/* Filtro por área: usa el dato que el bot captura antes de crear el ticket */}
+        {Object.keys(cola.porArea).length > 0 && (
+          <>
+            <div className="bf-side-label">Área de planta</div>
+            <div className="bf-area-chips">
+              {areaFiltro && (
+                <button className="bf-area-chip is-active" onClick={() => setAreaFiltro(null)}>
+                  {areaFiltro} <IcX size={11} />
+                </button>
+              )}
+              {Object.entries(cola.porArea)
+                .filter(([a]) => a !== areaFiltro)
+                .sort((x, y) => y[1] - x[1])
+                .map(([area, n]) => (
+                  <button key={area} className="bf-area-chip" onClick={() => setAreaFiltro(area)}>
+                    {area} <span className="bf-area-n">{n}</span>
+                  </button>
+                ))}
+            </div>
+          </>
+        )}
+
+        {/* Equipo con carga real, no presencia */}
         <div className="bf-side-section">
-          <div className="bf-side-label">Equipo TI</div>
+          <div className="bf-side-label" style={{ paddingBottom: 10 }}>Equipo TI</div>
           <div className="bf-team">
             {Object.keys(agentes).length === 0 ? (
               <p className="bf-team-empty">Sin agentes registrados</p>
             ) : (
-              Object.entries(agentes).map(([id, agente]) => (
-                <div key={id} className="bf-team-row">
-                  <div
-                    className="bf-avatar"
-                    style={{ background: colorPara(id) }}
-                  >
-                    {iniciales(agente.nombre)}
-                    <span className="bf-online" />
-                  </div>
-                  <div className="bf-team-info">
-                    <span className="bf-team-name">{agente.nombre}</span>
-                    <span className="bf-team-role">Agente TI</span>
-                  </div>
-                </div>
-              ))
+              (() => {
+                const cargas = Object.keys(agentes).map((id) => cola.porAgente[id] || 0);
+                const tope = Math.max(1, ...cargas);
+                return Object.entries(agentes).map(([id, agente]) => {
+                  const carga = cola.porAgente[id] || 0;
+                  return (
+                    <div key={id} className="bf-carga">
+                      <div className="bf-carga-top">
+                        <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(id) }}>
+                          {iniciales(agente.nombre)}
+                        </span>
+                        <span className="bf-carga-nombre">{agente.nombre.split(" ")[0]}</span>
+                        {carga === 0
+                          ? <span className="bf-carga-libre">libre</span>
+                          : <span className="bf-carga-n">{carga}</span>}
+                      </div>
+                      <div className="bf-carga-barra">
+                        <div
+                          className="bf-carga-fill"
+                          style={{
+                            width: `${Math.round((carga / tope) * 100)}%`,
+                            background: carga >= tope && tope > 2 ? C.naranja : C.azulLight,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                });
+              })()
             )}
           </div>
         </div>
 
+        <div className="bf-side-links">
+          <button
+            className={`bf-side-link${vista === "guias" ? " is-active" : ""}`}
+            onClick={() => setVista("guias")}
+          >
+            <IcBook size={15} /> Guías
+            <span className="bf-side-link-n">{guias.length}</span>
+          </button>
+          <button
+            className={`bf-side-link${vista === "config" ? " is-active" : ""}`}
+            onClick={() => setVista("config")}
+          >
+            <IcSettings size={15} /> Configuración
+          </button>
+        </div>
+
         <div className="bf-side-footer">
           <span className={`bf-live-dot${syncing ? " is-busy" : ""}`} />
-          <span style={{ flex: 1 }}>{syncing ? "Sincronizando…" : "Sincronización · 10s"}</span>
-          <button
-            className="bf-logout-btn"
-            onClick={logout}
-            title="Cerrar sesión"
-          >
+          <span style={{ flex: 1 }}>{syncing ? "Sincronizando…" : "En vivo"}</span>
+          <button className="bf-logout-btn" onClick={logout} title="Cerrar sesión">
             <IcLogout size={15} />
           </button>
         </div>
@@ -1114,14 +1198,25 @@ function App() {
             <h1 className="bf-title">
               {vista === "guias" ? "Guías de soporte"
                 : vista === "config" ? "Configuración"
-                : (TITULOS[filtro] || "Bandeja de entrada")}
+                : (TITULOS[filtro] || "Cola de trabajo")}
             </h1>
             <p className="bf-subtitle">
               {vista === "guias"
                 ? `${guias.length} ${guias.length === 1 ? "guía" : "guías"} configuradas`
                 : vista === "config"
                 ? "Agentes de soporte y whitelist de usuarios"
-                : `${visibles.length} ${visibles.length === 1 ? "ticket" : "tickets"} · canal WhatsApp`}
+                : masViejoSinAtender ? (
+                    <>
+                      {gruposVisibles.sin_atender.length}{" "}
+                      {gruposVisibles.sin_atender.length === 1 ? "ticket espera" : "tickets esperan"}
+                      {" "}a que alguien los tome · el más viejo lleva{" "}
+                      <strong style={{ color: colorEdad(edadMs(masViejoSinAtender, ahora)) }}>
+                        {textoEdad(edadMs(masViejoSinAtender, ahora))}
+                      </strong>
+                    </>
+                  ) : (
+                    `${totalVisibles} ${totalVisibles === 1 ? "ticket" : "tickets"} · nadie sin atender`
+                  )}
             </p>
           </div>
           <div className="bf-header-actions">
@@ -1129,7 +1224,7 @@ function App() {
               <div className="bf-search">
                 <IcSearch size={16} className="bf-search-ic" />
                 <input
-                  placeholder="Buscar por número o folio…"
+                  placeholder="Folio, número o máquina…"
                   value={busqueda}
                   onChange={(e) => setBusqueda(e.target.value)}
                 />
@@ -1141,28 +1236,6 @@ function App() {
             </button>
           </div>
         </header>
-
-        {/* KPIs */}
-        <section className="bf-kpis">
-          {kpis.map((k) => (
-            <div
-              key={k.label}
-              className="bf-kpi"
-              style={{ "--accent": k.color }}
-            >
-              <div
-                className="bf-kpi-icon"
-                style={{ background: k.tint, color: k.color }}
-              >
-                <k.icon size={20} />
-              </div>
-              <div>
-                <div className="bf-kpi-label">{k.label}</div>
-                <div className="bf-kpi-value">{k.value}</div>
-              </div>
-            </div>
-          ))}
-        </section>
 
         {/* Workspace */}
         {vista === "guias" ? (
@@ -1193,78 +1266,72 @@ function App() {
         <section className="bf-work">
           {/* Lista */}
           <div className="bf-panel bf-list">
-            <div className="bf-panel-head">
-              <IcSliders size={16} />
-              <span>Tickets ({visibles.length})</span>
-            </div>
-
             <div className="bf-list-body bf-scroll">
               {loading ? (
                 [0, 1, 2, 3].map((i) => <div key={i} className="bf-skel" />)
-              ) : visibles.length === 0 ? (
+              ) : totalVisibles === 0 ? (
                 <div className="bf-empty">
-                  <div className="bf-empty-ic">
-                    <IcCheckCircle size={28} />
-                  </div>
+                  <div className="bf-empty-ic"><IcCheckCircle size={28} /></div>
                   <p className="bf-empty-title">Bandeja al día</p>
                   <p className="bf-empty-text">
-                    {busqueda
-                      ? "Ningún ticket coincide con tu búsqueda."
+                    {busqueda || areaFiltro
+                      ? "Ningún ticket coincide con el filtro."
                       : "Los tickets aparecen aquí en automático cuando el bot necesita un humano."}
                   </p>
                 </div>
               ) : (
-                visibles.map((ticket) => {
-                  const isSelected = selectedId === ticket.id;
-                  const abierto = ESTADOS_ACTIVOS_SET.has(ticket.estado);
-                  const agente = agentes[ticket.asignado_a];
-                  const sinAsignar = abierto && !ticket.asignado_a;
+                GRUPOS.map((g) => {
+                  const items = gruposVisibles[g.id];
+                  if (!items.length) return null;
+                  const enfocado = filtro === g.id;
                   return (
-                    <button
-                      key={ticket.id}
-                      className={`bf-card${isSelected ? " is-selected" : ""}`}
-                      onClick={() => setSelectedId(ticket.id)}
-                    >
-                      <div className="bf-card-top">
-                        <span className="bf-card-id">#{ticket.id}</span>
-                        <EstadoBadge estado={ticket.estado} />
-                      </div>
-
-                      {(ticket.area || ticket.maquina) && (
-                        <span className="bf-card-ubicacion">
-                          {[ticket.area, ticket.maquina].filter(Boolean).join(" · ")}
+                    <div key={g.id} className="bf-grupo">
+                      <button
+                        className="bf-grupo-head"
+                        onClick={() => setFiltro(g.id)}
+                        title={enfocado ? g.sub : "Enfocar este grupo"}
+                      >
+                        <span className="bf-grupo-dot" style={{ background: g.dot }} />
+                        <span className="bf-grupo-label">{g.label}</span>
+                        <span className={`bf-grupo-n${enfocado ? " is-active" : ""}`}
+                              style={enfocado && g.id === "sin_atender" ? { background: C.naranja, color: "#fff" } : undefined}>
+                          {items.length}
                         </span>
-                      )}
+                        <span className="bf-grupo-linea" />
+                      </button>
 
-                      <p className="bf-card-preview">
-                        {ultimoMensaje(ticket)}
-                      </p>
-
-                      <div className="bf-card-foot">
-                        <span className="bf-card-meta">
-                          <IcPhone size={13} /> +{ticket.numero}
-                        </span>
-                        {agente ? (
-                          <span className="bf-card-agent">
-                            <span
-                              className="bf-avatar bf-avatar-sm"
-                              style={{
-                                background: colorPara(ticket.asignado_a),
-                              }}
-                            >
-                              {iniciales(agente.nombre)}
-                            </span>
-                            {agente.nombre.split(" ")[0]}
-                          </span>
-                        ) : sinAsignar ? (
-                          <span className="bf-pill-urgent">Sin asignar</span>
-                        ) : (
-                          <span className="bf-card-date">
-                            <IcClock size={12} /> {ticket.fecha}
-                          </span>
+                      <div className="bf-grupo-body">
+                        {(enfocado ? items : items.slice(0, 4)).map((t) => (
+                          enfocado ? (
+                            <FilaExpandida
+                              key={t.id}
+                              ticket={t}
+                              agentes={agentes}
+                              ahora={ahora}
+                              seleccionado={selectedId === t.id}
+                              miAgenteId={miAgenteId}
+                              onAbrir={() => setSelectedId(t.id)}
+                              onAsignar={asignarTicket}
+                              onRecordar={enviarMensaje}
+                            />
+                          ) : (
+                            <FilaCompacta
+                              key={t.id}
+                              ticket={t}
+                              agentes={agentes}
+                              ahora={ahora}
+                              seleccionado={selectedId === t.id}
+                              onAbrir={() => setSelectedId(t.id)}
+                            />
+                          )
+                        ))}
+                        {!enfocado && items.length > 4 && (
+                          <button className="bf-grupo-mas" onClick={() => setFiltro(g.id)}>
+                            Ver los {items.length - 4} restantes
+                          </button>
                         )}
                       </div>
-                    </button>
+                    </div>
                   );
                 })
               )}
@@ -1292,6 +1359,8 @@ function App() {
                 auditLog={auditLog}
                 imagenes={selectedImagenes}
                 cargandoHistorial={!detalleListo}
+                ahora={ahora}
+                miAgenteId={miAgenteId}
                 onClose={() => setSelectedId(null)}
                 onAsignar={asignarTicket}
                 onTransicionar={transicionarTicket}
@@ -1309,6 +1378,112 @@ function App() {
 }
 
 /* Subcomponentes ------------------------------------------------ */
+/* Fila del grupo enfocado: el tiempo de espera manda y las acciones
+   más comunes (tomar, asignar, recordar) no obligan a abrir el detalle. */
+function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbrir, onAsignar, onRecordar }) {
+  const [asignando, ejecAsignar] = useAccion();
+  const ms = edadMs(ticket, ahora);
+  const color = colorEdad(ms);
+  const agente = agentes[ticket.asignado_a];
+  const sinDuenio = !ticket.asignado_a && ESTADOS_ACTIVOS_SET.has(ticket.estado);
+  const esperando = ticket.estado === "WAITING_FOR_USER";
+  const frenar = (e) => e.stopPropagation();
+
+  return (
+    <div className={`bf-fila${seleccionado ? " is-selected" : ""}`} onClick={onAbrir}>
+      <span className="bf-fila-riel" style={{ background: color }} />
+      <div className="bf-fila-cuerpo">
+        <div className="bf-fila-top">
+          <span className="bf-fila-id">{ticket.id}</span>
+          {(ticket.maquina || ticket.area) && (
+            <span className="bf-fila-maq" style={{ color, background: `${color}14` }}>
+              {ticket.maquina || ticket.area}
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
+          <span className="bf-fila-edad" style={{ color }}>{textoEdad(ms)}</span>
+        </div>
+
+        <p className="bf-fila-texto">{ultimoMensaje(ticket)}</p>
+
+        <div className="bf-fila-acciones" onClick={frenar}>
+          {sinDuenio ? (
+            <>
+              {miAgenteId && (
+                <BotonAccion
+                  className="bf-accion bf-accion-primaria"
+                  onClick={() => onAsignar(ticket.id, miAgenteId)}
+                  cargandoTexto="Tomando…"
+                >
+                  Tomar yo
+                </BotonAccion>
+              )}
+              <div className="bf-accion-select">
+                <select
+                  value=""
+                  disabled={asignando}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    if (id) ejecAsignar(() => onAsignar(ticket.id, id));
+                  }}
+                >
+                  <option value="">{asignando ? "Asignando…" : "Asignar a…"}</option>
+                  {Object.entries(agentes).map(([id, a]) => (
+                    <option key={id} value={id}>{a.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : esperando ? (
+            <BotonAccion
+              className="bf-accion"
+              onClick={() => onRecordar(ticket.id, TEMPLATES_RAPIDOS[1].texto,
+                                        agente ? agente.nombre : "Agente TI")}
+              cargandoTexto="Enviando…"
+            >
+              Recordar por WhatsApp
+            </BotonAccion>
+          ) : agente ? (
+            <span className="bf-fila-agente">
+              <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(ticket.asignado_a) }}>
+                {iniciales(agente.nombre)}
+              </span>
+              {agente.nombre.split(" ")[0]}
+            </span>
+          ) : (
+            <EstadoBadge estado={ticket.estado} />
+          )}
+          <span style={{ flex: 1 }} />
+          <span className="bf-fila-quien">{ticket.nombre} · +{ticket.numero}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Fila de un grupo no enfocado: una línea, solo para no perderlo de vista. */
+function FilaCompacta({ ticket, agentes, ahora, seleccionado, onAbrir }) {
+  const ms = edadMs(ticket, ahora);
+  const agente = agentes[ticket.asignado_a];
+  return (
+    <div className={`bf-fila-min${seleccionado ? " is-selected" : ""}`} onClick={onAbrir}>
+      {agente ? (
+        <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(ticket.asignado_a) }}>
+          {iniciales(agente.nombre)}
+        </span>
+      ) : (
+        <span className="bf-avatar bf-avatar-sm bf-avatar-vacio">?</span>
+      )}
+      <span className="bf-fila-min-id">{ticket.id}</span>
+      {(ticket.maquina || ticket.area) && (
+        <span className="bf-fila-min-maq">{ticket.maquina || ticket.area}</span>
+      )}
+      <span className="bf-fila-min-texto">{ultimoMensaje(ticket)}</span>
+      <span className="bf-fila-min-edad" style={{ color: colorEdad(ms) }}>{textoEdad(ms)}</span>
+    </div>
+  );
+}
+
 function EstadoBadge({ estado }) {
   const meta = ESTADO_META[estado] || ESTADO_META["OPEN"];
   return (
@@ -1322,7 +1497,7 @@ function EstadoBadge({ estado }) {
   );
 }
 
-function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHistorial = false, onClose, onAsignar, onTransicionar, onEliminar, onPatch, onEnviarMensaje }) {
+function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHistorial = false, ahora = Date.now(), miAgenteId = null, onClose, onAsignar, onTransicionar, onEliminar, onPatch, onEnviarMensaje }) {
   const [notas, setNotas] = useState(ticket.notas_internas || "");
   const [pasos, setPasos] = useState(ticket.pasos_intentados || "");
   const [prioridad, setPrioridad] = useState(ticket.prioridad || "normal");
@@ -1359,15 +1534,21 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
     <>
       {/* Cabecera */}
       <div className="bf-detail-head">
-        <div>
-          <div className="bf-detail-id">
-            Caso #{ticket.id} <EstadoBadge estado={ticket.estado} />
-          </div>
-          <p className="bf-detail-sub">Origen · WhatsApp Business</p>
+        <div className="bf-detail-head-top">
+          <span className="bf-detail-id">{ticket.id}</span>
+          <EstadoBadge estado={ticket.estado} />
+          <span style={{ flex: 1 }} />
+          <span className="bf-detail-edad">
+            Abierto hace {textoEdad(edadMs(ticket, ahora))}
+          </span>
+          <button className="bf-detail-cerrar" onClick={onClose} aria-label="Cerrar detalle">
+            <IcX size={16} />
+          </button>
         </div>
-        <button className="bf-icon-btn" onClick={onClose} aria-label="Cerrar detalle">
-          <IcX size={18} />
-        </button>
+        <p className="bf-detail-sub">
+          {[ticket.maquina || ticket.area, ticket.nombre, `+${ticket.numero}`]
+            .filter(Boolean).join(" · ")}
+        </p>
       </div>
 
       {/* Meta grid */}
@@ -1423,6 +1604,23 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
         <div className="bf-descripcion">
           <div className="bf-chat-label">Descripción del problema</div>
           <p className="bf-desc-text">{ticket.descripcion || ticket.resumen_ia}</p>
+        </div>
+      )}
+
+      {/* Lo que el bot ya intentó: evita que TI repita los mismos pasos */}
+      {ticket.pasos_intentados && ticket.pasos_intentados.trim() && (
+        <div className="bf-intentado">
+          <div className="bf-chat-label" style={{ marginBottom: 8 }}>Lo que el bot ya intentó</div>
+          {ticket.pasos_intentados
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .map((linea, i) => (
+              <div key={i} className="bf-intentado-item">
+                <span className="bf-intentado-n">{i + 1}</span>
+                <span>{linea}</span>
+              </div>
+            ))}
         </div>
       )}
 
@@ -1496,27 +1694,42 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
       {/* Agente */}
       <div className="bf-assign">
         <label className="bf-assign-label">
-          Agente asignado
+          {ticket.asignado_a ? "Reasignar" : "Tomar el caso"}
           {asignando && (
             <span className="bf-cargando-inline">
               <IcSpinner size={12} className="bf-spin" /> Asignando…
             </span>
           )}
         </label>
-        <div className="bf-select-wrap">
-          <select
-            value={ticket.asignado_a || ""}
-            disabled={asignando}
-            onChange={(e) => {
-              const id = e.target.value;
-              ejecAsignar(() => onAsignar(ticket.id, id));
-            }}
-          >
-            <option value="" disabled>Selecciona un agente…</option>
-            {Object.entries(agentes).map(([id, a]) => (
-              <option key={id} value={id}>{a.nombre}</option>
+        <div className="bf-tomar">
+          {/* El propio usuario primero: tomar un caso es la acción más común */}
+          {miAgenteId && agentes[miAgenteId] && (
+            <button
+              className={`bf-tomar-chip${ticket.asignado_a === miAgenteId ? " is-active" : ""}`}
+              disabled={asignando || ticket.asignado_a === miAgenteId}
+              onClick={() => ejecAsignar(() => onAsignar(ticket.id, miAgenteId))}
+            >
+              <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(miAgenteId) }}>
+                {iniciales(agentes[miAgenteId].nombre)}
+              </span>
+              Yo
+            </button>
+          )}
+          {Object.entries(agentes)
+            .filter(([id]) => id !== miAgenteId)
+            .map(([id, a]) => (
+              <button
+                key={id}
+                className={`bf-tomar-chip${ticket.asignado_a === id ? " is-active" : ""}`}
+                disabled={asignando || ticket.asignado_a === id}
+                onClick={() => ejecAsignar(() => onAsignar(ticket.id, id))}
+              >
+                <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(id) }}>
+                  {iniciales(a.nombre)}
+                </span>
+                {a.nombre.split(" ")[0]}
+              </button>
             ))}
-          </select>
         </div>
       </div>
 
@@ -2430,27 +2643,6 @@ const CSS = `
 .bf-brand-name{font-size:18px;font-weight:800;letter-spacing:-0.4px;line-height:1.1}
 .bf-brand-tag{font-size:11px;color:${C.azulLight};font-weight:500;margin-top:2px;letter-spacing:.2px}
 
-.bf-nav{display:flex;flex-direction:column;gap:4px;margin-top:8px}
-.bf-nav-item{
-  display:flex;align-items:center;gap:12px;width:100%;
-  padding:11px 14px;border:none;border-radius:11px;cursor:pointer;
-  background:transparent;color:#B9CDCB;font-size:14px;font-weight:500;
-  text-align:left;transition:all .15s ease;position:relative;
-}
-.bf-nav-item span:first-of-type{flex:1}
-.bf-nav-item:hover{background:rgba(255,255,255,0.05);color:#fff}
-.bf-nav-item.is-active{background:rgba(133,182,196,0.16);color:#fff}
-.bf-nav-item.is-active::before{
-  content:"";position:absolute;left:-18px;top:50%;transform:translateY(-50%);
-  width:4px;height:20px;border-radius:0 4px 4px 0;background:${C.naranja};
-}
-.bf-nav-count{
-  font-size:11px;font-weight:700;min-width:22px;height:20px;padding:0 6px;
-  border-radius:10px;background:rgba(255,255,255,0.08);color:#C7D8D6;
-  display:flex;align-items:center;justify-content:center;
-}
-.bf-nav-item.is-active .bf-nav-count{background:${C.naranja};color:#fff}
-
 .bf-side-section{margin-top:28px;flex:1;min-height:0;display:flex;flex-direction:column}
 .bf-side-label{
   font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;
@@ -2458,11 +2650,6 @@ const CSS = `
 }
 .bf-team{display:flex;flex-direction:column;gap:6px;overflow-y:auto}
 .bf-team-empty{font-size:12px;color:#6E908D;padding:0 8px}
-.bf-team-row{display:flex;align-items:center;gap:11px;padding:7px 8px;border-radius:10px;transition:background .15s}
-.bf-team-row:hover{background:rgba(255,255,255,0.04)}
-.bf-team-info{display:flex;flex-direction:column;line-height:1.25;min-width:0}
-.bf-team-name{font-size:13px;font-weight:600;color:#EAF1F0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bf-team-role{font-size:11px;color:${C.azulLight}}
 
 .bf-avatar{
   position:relative;width:34px;height:34px;border-radius:10px;flex-shrink:0;
@@ -2470,10 +2657,6 @@ const CSS = `
   color:#fff;font-size:12px;font-weight:700;
 }
 .bf-avatar-sm{width:20px;height:20px;border-radius:6px;font-size:9px}
-.bf-online{
-  position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;
-  background:${C.azulLight};border:2px solid ${C.azulDark};
-}
 
 .bf-side-footer{
   display:flex;align-items:center;gap:8px;font-size:11.5px;color:#7C9C99;
@@ -2521,21 +2704,60 @@ const CSS = `
 .bf-meta-v-row{display:flex;align-items:center;gap:7px}
 @keyframes bf-spin{to{transform:rotate(360deg)}}
 
-/* ── KPIs ── */
-.bf-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:26px}
-.bf-kpi{
-  background:${C.surface};border:1px solid ${C.border};border-radius:16px;
-  padding:20px;display:flex;align-items:center;gap:16px;position:relative;overflow:hidden;
-  box-shadow:0 1px 2px rgba(21,62,62,0.04);transition:transform .15s, box-shadow .15s;
+/* ── Cola de trabajo (barra lateral) ── */
+.bf-cola{display:flex;flex-direction:column;gap:3px;margin-bottom:22px}
+.bf-cola-item{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;cursor:pointer;
+  padding:10px 12px;border:none;border-radius:9px;background:transparent;
+  color:#B9CDCB;transition:background .15s,color .15s;
 }
-.bf-kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent)}
-.bf-kpi:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(21,62,62,0.08)}
-.bf-kpi-icon{width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.bf-kpi-label{font-size:12px;font-weight:600;color:${C.textMuted};text-transform:uppercase;letter-spacing:.4px}
-.bf-kpi-value{font-size:30px;font-weight:800;color:${C.azulDark};line-height:1.1;margin-top:3px;letter-spacing:-0.5px}
+.bf-cola-item:hover{background:rgba(255,255,255,0.05);color:#fff}
+.bf-cola-item.is-active{background:rgba(133,182,196,0.16);color:#fff}
+.bf-cola-item.is-urgente .bf-cola-count{background:${C.naranja};color:#fff}
+.bf-cola-item.is-active.is-urgente{background:${C.naranja};color:#fff}
+.bf-cola-item.is-active.is-urgente .bf-cola-count{background:rgba(255,255,255,0.22)}
+.bf-cola-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0}
+.bf-cola-label{flex:1;font-size:13.5px;font-weight:600}
+.bf-cola-count{
+  font-size:13px;font-weight:800;letter-spacing:-0.3px;min-width:24px;height:21px;padding:0 7px;
+  border-radius:7px;background:rgba(255,255,255,0.08);color:#E8F0EF;
+  display:flex;align-items:center;justify-content:center;
+}
+
+/* Chips de área */
+.bf-area-chips{display:flex;flex-wrap:wrap;gap:5px;padding:0 4px;margin-bottom:4px}
+.bf-area-chip{
+  display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  font-size:11px;font-weight:700;letter-spacing:.2px;padding:4px 9px;border-radius:7px;
+  border:none;background:rgba(255,255,255,0.08);color:#D6E4E2;transition:background .15s;
+}
+.bf-area-chip:hover{background:rgba(255,255,255,0.14)}
+.bf-area-chip.is-active{background:${C.naranja};color:#fff}
+.bf-area-n{color:${C.azulLight};font-weight:600}
+.bf-area-chip.is-active .bf-area-n{color:rgba(255,255,255,0.75)}
+
+/* Carga por agente */
+.bf-carga{display:flex;flex-direction:column;gap:5px}
+.bf-carga-top{display:flex;align-items:center;gap:9px}
+.bf-carga-nombre{flex:1;font-size:12.5px;font-weight:600;color:#EAF1F0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bf-carga-n{font-size:12px;font-weight:800;color:#E8F0EF;letter-spacing:-0.2px}
+.bf-carga-libre{font-size:10.5px;font-weight:700;color:#4F9089}
+.bf-carga-barra{height:3px;border-radius:2px;background:rgba(255,255,255,0.08);overflow:hidden}
+.bf-carga-fill{height:3px;border-radius:2px;transition:width .3s ease}
+
+/* Accesos secundarios */
+.bf-side-links{display:flex;flex-direction:column;gap:2px;margin-top:14px}
+.bf-side-link{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;cursor:pointer;
+  padding:8px 12px;border:none;border-radius:9px;background:transparent;
+  color:#7C9C99;font-size:12.5px;font-weight:600;transition:background .15s,color .15s;
+}
+.bf-side-link:hover{background:rgba(255,255,255,0.05);color:#C7D8D6}
+.bf-side-link.is-active{background:rgba(133,182,196,0.16);color:#fff}
+.bf-side-link-n{margin-left:auto;font-size:11px;font-weight:700;color:#6E908D}
 
 /* ── Workspace ── */
-.bf-work{display:grid;grid-template-columns:minmax(340px,1fr) 1.25fr;gap:22px;align-items:start}
+.bf-work{display:grid;grid-template-columns:minmax(430px,1fr) 1.1fr;gap:18px;align-items:start}
 .bf-panel{background:${C.surface};border:1px solid ${C.border};border-radius:18px;box-shadow:0 1px 2px rgba(21,62,62,0.04)}
 .bf-panel-head{
   display:flex;align-items:center;gap:9px;padding:18px 20px;
@@ -2543,34 +2765,78 @@ const CSS = `
 }
 .bf-panel-head svg{color:${C.textMuted}}
 
-/* Lista */
-.bf-list-body{padding:12px;display:flex;flex-direction:column;gap:9px;max-height:calc(100vh - 320px);overflow-y:auto}
-.bf-card{
-  display:block;width:100%;text-align:left;cursor:pointer;
-  padding:15px;border-radius:14px;border:1px solid ${C.border};
-  background:${C.surface};transition:all .15s ease;
+/* ── Lista agrupada por urgencia ── */
+.bf-list-body{padding:14px;display:flex;flex-direction:column;gap:18px;max-height:calc(100vh - 210px);overflow-y:auto}
+
+.bf-grupo{display:flex;flex-direction:column}
+.bf-grupo-head{
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;
+  border:none;background:transparent;padding:0 2px 8px;
 }
-.bf-card:hover{border-color:${C.borderStrong};background:${C.surfaceAlt}}
-.bf-card.is-selected{border-color:${C.naranja};background:rgba(208,100,48,0.04);box-shadow:0 0 0 1px ${C.naranja} inset}
-.bf-card-top{display:flex;justify-content:space-between;align-items:center}
-.bf-card-id{font-size:14px;font-weight:700;color:${C.azulDark}}
-.bf-card-ubicacion{align-self:flex-start;font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:${C.azulDark};background:${C.surfaceAlt};border:1px solid ${C.border};border-radius:999px;padding:3px 9px}
-.bf-card-preview{
-  font-size:13px;color:${C.textMuted};margin:9px 0 12px;line-height:1.45;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+.bf-grupo-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.bf-grupo-label{font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:${C.azulDark}}
+.bf-grupo-n{
+  font-size:11px;font-weight:700;padding:1px 8px;border-radius:20px;
+  background:#E4ECEC;color:${C.textMuted};
 }
-.bf-card-foot{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.bf-card-meta{display:flex;align-items:center;gap:5px;font-size:12.5px;color:${C.textMuted};font-weight:500}
-.bf-card-meta svg{color:${C.textFaint}}
-.bf-card-date{display:flex;align-items:center;gap:4px;font-size:11.5px;color:${C.textFaint}}
-.bf-card-agent{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:${C.azulDark}}
+.bf-grupo-n.is-active{background:${C.azulDark};color:#fff}
+.bf-grupo-linea{flex:1;height:1px;background:${C.border}}
+.bf-grupo-body{border:1px solid ${C.border};border-radius:12px;overflow:hidden;background:${C.surface}}
+.bf-grupo-mas{
+  display:block;width:100%;text-align:center;cursor:pointer;border:none;
+  border-top:1px solid ${C.bg};background:${C.surfaceAlt};
+  padding:8px;font-size:11.5px;font-weight:600;color:${C.textMuted};
+}
+.bf-grupo-mas:hover{background:#EEF3F3;color:${C.azulDark}}
+
+/* Fila expandida */
+.bf-fila{display:flex;align-items:stretch;cursor:pointer;border-bottom:1px solid ${C.bg};transition:background .15s}
+.bf-fila:last-child{border-bottom:none}
+.bf-fila:hover{background:${C.surfaceAlt}}
+.bf-fila.is-selected{background:rgba(208,100,48,0.05)}
+.bf-fila-riel{width:4px;flex-shrink:0}
+.bf-fila-cuerpo{flex:1;min-width:0;padding:12px 14px}
+.bf-fila-top{display:flex;align-items:center;gap:9px}
+.bf-fila-id{font-size:13px;font-weight:800;color:${C.azulDark};letter-spacing:-0.2px}
+.bf-fila-maq{font-size:10.5px;font-weight:800;letter-spacing:.4px;border-radius:5px;padding:2px 7px}
+.bf-fila-edad{font-size:15px;font-weight:800;letter-spacing:-0.3px}
+.bf-fila-texto{
+  font-size:12.5px;color:#3E5C5A;margin-top:5px;line-height:1.4;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.bf-fila-acciones{display:flex;align-items:center;gap:8px;margin-top:9px}
+.bf-fila-quien{font-size:11.5px;color:${C.textFaint};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
+.bf-fila-agente{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:${C.azulDark}}
+.bf-accion{
+  display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+  font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:7px;
+  border:1px solid ${C.border};background:${C.bg};color:${C.textMuted};transition:all .15s;
+}
+.bf-accion:hover:not(:disabled){background:#E7EEEE;color:${C.azulDark}}
+.bf-accion:disabled{opacity:.6;cursor:default}
+.bf-accion-primaria{background:${C.azulDark};border-color:${C.azulDark};color:#fff;font-weight:700}
+.bf-accion-primaria:hover:not(:disabled){background:#0F2E2E;color:#fff}
+.bf-accion-select select{
+  font-family:inherit;font-size:11.5px;font-weight:600;color:${C.textMuted};cursor:pointer;
+  padding:5px 9px;border-radius:7px;border:1px solid ${C.border};background:${C.bg};outline:none;
+}
+
+/* Fila compacta (grupo no enfocado) */
+.bf-fila-min{
+  display:flex;align-items:center;gap:10px;cursor:pointer;padding:9px 14px;
+  border-bottom:1px solid ${C.bg};transition:background .15s;
+}
+.bf-fila-min:last-child{border-bottom:none}
+.bf-fila-min:hover{background:${C.surfaceAlt}}
+.bf-fila-min.is-selected{background:rgba(208,100,48,0.05)}
+.bf-avatar-vacio{background:${C.bg};border:1px dashed ${C.borderStrong};color:${C.urgentText}}
+.bf-fila-min-id{font-size:12.5px;font-weight:800;color:${C.azulDark};flex-shrink:0}
+.bf-fila-min-maq{font-size:10.5px;font-weight:700;color:${C.textMuted};background:${C.bg};border-radius:5px;padding:2px 7px;flex-shrink:0}
+.bf-fila-min-texto{flex:1;min-width:0;font-size:12.5px;color:${C.textMuted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bf-fila-min-edad{font-size:12px;font-weight:700;flex-shrink:0}
 
 .bf-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:20px;font-size:11.5px;font-weight:700}
 .bf-badge-dot{width:6px;height:6px;border-radius:50%}
-.bf-pill-urgent{
-  font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;
-  background:${C.urgentBg};color:${C.urgentText};
-}
 
 /* Skeleton + empty */
 .bf-skel{height:96px;border-radius:14px;background:linear-gradient(90deg,#EEF3F3 25%,#F6F9F9 50%,#EEF3F3 75%);background-size:200% 100%;animation:bf-shimmer 1.3s infinite}
@@ -2582,10 +2848,46 @@ const CSS = `
 .bf-empty-text{font-size:13px;color:${C.textMuted};max-width:260px;margin-top:6px;line-height:1.5}
 
 /* Detalle */
-.bf-detail{padding:22px 24px;display:flex;flex-direction:column}
-.bf-detail-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}
-.bf-detail-id{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:800;color:${C.azulDark}}
-.bf-detail-sub{font-size:12.5px;color:${C.textMuted};margin-top:5px}
+.bf-detail{padding:0 24px 22px;display:flex;flex-direction:column}
+/* Cabecera a sangre: se sale del padding del panel para ocupar todo el ancho */
+.bf-detail-head{
+  margin:0 -24px 20px;padding:16px 24px;background:${C.azulDark};color:#E8F0EF;
+  border-radius:18px 18px 0 0;
+}
+.bf-detail-head-top{display:flex;align-items:center;gap:10px}
+.bf-detail-id{font-size:18px;font-weight:800;color:#fff;letter-spacing:-0.4px}
+.bf-detail-edad{font-size:11.5px;font-weight:600;color:${C.azulLight}}
+.bf-detail-cerrar{
+  width:28px;height:28px;border-radius:8px;border:none;cursor:pointer;flex-shrink:0;
+  background:rgba(255,255,255,0.08);color:#B9CDCB;display:flex;align-items:center;justify-content:center;
+  transition:background .15s,color .15s;
+}
+.bf-detail-cerrar:hover{background:rgba(255,255,255,0.16);color:#fff}
+.bf-detail-sub{font-size:12.5px;color:#B9CDCB;margin-top:9px}
+
+/* Chips para tomar/asignar el caso */
+.bf-tomar{display:flex;flex-wrap:wrap;gap:7px}
+.bf-tomar-chip{
+  display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  padding:5px 12px 5px 5px;border-radius:9px;border:1px solid ${C.border};
+  background:${C.surfaceAlt};color:${C.azulDark};font-size:12.5px;font-weight:600;
+  font-family:inherit;transition:all .15s;
+}
+.bf-tomar-chip:hover:not(:disabled){border-color:${C.azulLight};background:${C.surface}}
+.bf-tomar-chip.is-active{border-color:${C.naranja};background:rgba(208,100,48,0.06);font-weight:700}
+.bf-tomar-chip:disabled{cursor:default}
+
+/* Pasos que el bot ya recorrió */
+.bf-intentado{
+  margin-bottom:18px;padding:14px 16px;background:${C.surfaceAlt};
+  border:1px solid ${C.border};border-radius:14px;
+}
+.bf-intentado-item{display:flex;gap:9px;align-items:flex-start;margin-top:6px;font-size:12.5px;color:#3E5C5A;line-height:1.4}
+.bf-intentado-n{
+  width:17px;height:17px;border-radius:5px;flex-shrink:0;margin-top:1px;
+  background:${C.doneBg};color:${C.doneText};font-size:10px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;
+}
 .bf-icon-btn{width:34px;height:34px;border-radius:10px;border:1px solid ${C.border};background:${C.surface};color:${C.textMuted};cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .bf-icon-btn:hover{background:${C.surfaceAlt};color:${C.azulDark}}
 
@@ -2646,14 +2948,6 @@ const CSS = `
 
 .bf-assign{margin-bottom:14px}
 .bf-assign-label{display:block;font-size:12px;font-weight:600;color:${C.textMuted};margin-bottom:8px}
-.bf-select-wrap{position:relative}
-.bf-select-wrap::after{content:"";position:absolute;right:16px;top:50%;width:9px;height:9px;border-right:2px solid ${C.textMuted};border-bottom:2px solid ${C.textMuted};transform:translateY(-70%) rotate(45deg);pointer-events:none}
-.bf-select-wrap select{
-  width:100%;height:46px;padding:0 40px 0 16px;border-radius:12px;
-  border:1px solid ${C.border};background:${C.surface};color:${C.text};
-  font-size:14px;font-weight:500;cursor:pointer;appearance:none;outline:none;transition:border-color .15s, box-shadow .15s;
-}
-.bf-select-wrap select:focus{border-color:${C.azulLight};box-shadow:0 0 0 3px rgba(133,182,196,0.18)}
 
 /* Selector de prioridad inline */
 .bf-prio-select{
