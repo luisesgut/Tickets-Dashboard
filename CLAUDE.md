@@ -33,6 +33,52 @@ Single-page Create React App (React 19). No routing, no state management library
 | `ESTADOS_TERMINALES_SET` | Set of terminal states: RESOLVED, CLOSED |
 | `TEMPLATES_RAPIDOS` | Array of `{label, texto}` quick-reply templates for direct WhatsApp messaging |
 
+### Loading states (required for every endpoint call)
+
+Every control that hits the API must show it is working. Two primitives at the top of
+App.js cover all of them — **use these instead of adding another ad-hoc `useState`**:
+
+- **`<BotonAccion>`** — drop-in replacement for `<button>`. Disables itself and swaps its
+  label for a spinner while `onClick`'s promise is pending, so double-clicks can't fire a
+  second POST. Props beyond a normal button:
+  - `cargandoTexto` — text shown next to the spinner. Omit to reuse `children`; pass `""`
+    for icon-only buttons.
+  - `confirmar` — a string; runs `window.confirm` with it before executing.
+- **`useAccion()`** — returns `[cargando, ejecutar]` for controls that aren't buttons
+  (`<select>`, `<input type="file">`). `BotonAccion` is built on it.
+
+Both guard against `setState` on an unmounted component: deleting a ticket unmounts its
+own panel while the request is still in flight.
+
+**`onClick` must return the promise** — `() => onPatch(...)`, not `() => { onPatch(...) }` —
+or the spinner disappears immediately. For the same reason every handler in App awaits its
+refetch (`await fetchData()`), so the spinner covers the refresh too, not just the mutation.
+
+Exceptions that manage their own indicator: the header's Sincronizar button (`syncing` +
+`bf-spin`) and per-step image uploads in EditorGuia (`subiendoImgPasoId`, so only the step
+being uploaded spins).
+
+### Sync model (sentinel polling)
+
+`fetchData()` is no longer on a blind 10-second timer. Every `POLL_MS` the app hits
+`GET /tickets/version` (~40 bytes) and only calls `fetchData()` when the signature changed;
+polling also pauses while `document.hidden` and resumes on `visibilitychange`.
+
+Consequences to keep in mind when editing:
+
+- `versionRef` is refreshed **inside `fetchData`** (it fetches `/tickets/version` alongside
+  the rest), so any action that calls `fetchData` leaves the sentinel in sync — no redundant
+  refetch on the next tick.
+- **The ticket list has no `historial`.** It carries `preview`; `ultimoMensaje()` reads that
+  and only falls back to `historial` for the full detail object. The conversation comes from
+  `fetchTicketDetalle()` → `ticketDetalle`, and `ticketSeleccionado` merges the list row
+  (source of truth for every scalar field) with `historial` from the detail.
+- `fetchData` re-fetches the open ticket's detail (`selectedIdRef`) so the conversation stays
+  live. Image blobs are **not** re-downloaded on every sync — `imgsCargadasRef` compares the
+  image id list and only rebuilds the object URLs when it actually changed.
+- While the detail is in flight, `cargandoHistorial` shows a spinner instead of the
+  "Aún no hay mensajes" empty state, which would otherwise flash on every open.
+
 ### Components
 
 | Component | Description |

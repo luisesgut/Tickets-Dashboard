@@ -47,13 +47,19 @@ const colorPara = (key = "") => {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 };
 
+// El listado ya no trae `historial` (era el 70% del payload); el backend manda
+// `preview` ya recortado. El fallback cubre el detalle completo.
 const ultimoMensaje = (t) => {
+  if (t?.preview) return t.preview;
   const h = t?.historial;
   if (!h || !h.length) return "Sin mensajes todavía";
   const m = h[h.length - 1];
   const prefijo = m.role === "user" ? "" : "Bot: ";
   return prefijo + (m.content || "");
 };
+
+// Cada cuánto se le pregunta al centinela si algo cambió.
+const POLL_MS = 10000;
 
 const TITULOS = {
   todos: "Bandeja de entrada",
@@ -276,6 +282,67 @@ const IcLogout = (p) => (
 /* ──────────────────────────────────────────────────────────────
    Componente principal
    ────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────
+   Estado de carga para acciones que pegan a un endpoint
+   ────────────────────────────────────────────────────────────── */
+
+const IcSpinner = (p) => (
+  <Icon {...p} d={<path d="M21 12a9 9 0 1 1-6.22-8.56" />} />
+);
+
+/**
+ * Corre una acción asíncrona exponiendo si está en vuelo.
+ * - Ignora clics repetidos mientras corre (evita dobles POST).
+ * - No actualiza estado si el componente ya se desmontó: eliminar un ticket
+ *   cierra su panel, y sin esta guarda React avisa de un setState huérfano.
+ */
+function useAccion() {
+  const [cargando, setCargando] = useState(false);
+  const vivo = useRef(true);
+  useEffect(() => () => { vivo.current = false; }, []);
+
+  const ejecutar = async (fn) => {
+    if (cargando) return;
+    setCargando(true);
+    try {
+      return await fn();
+    } catch (e) {
+      console.error("Acción fallida", e);
+    } finally {
+      if (vivo.current) setCargando(false);
+    }
+  };
+  return [cargando, ejecutar];
+}
+
+/**
+ * Botón que se bloquea y muestra spinner mientras su onClick esté pendiente.
+ * `onClick` debe regresar la promesa de la llamada para que el spinner dure
+ * lo que dura la petición (y su refresco).
+ *   cargandoTexto: texto durante la carga. "" = solo spinner (botones de icono).
+ *   confirmar: si viene, pide window.confirm antes de ejecutar.
+ */
+function BotonAccion({ onClick, confirmar, cargandoTexto, children, disabled, ...rest }) {
+  const [cargando, ejecutar] = useAccion();
+
+  const manejar = (e) => {
+    if (cargando || disabled) return;
+    if (confirmar && !window.confirm(confirmar)) return;
+    return ejecutar(() => onClick(e));
+  };
+
+  return (
+    <button {...rest} onClick={manejar} disabled={cargando || disabled}>
+      {cargando ? (
+        <span className="bf-btn-cargando">
+          <IcSpinner size={14} className="bf-spin" />
+          {cargandoTexto !== undefined ? cargandoTexto : children}
+        </span>
+      ) : children}
+    </button>
+  );
+}
+
 function App() {
   // ── Autenticación ────────────────────────────────────────────
   const [autenticado, setAutenticado] = useState(false);
@@ -303,12 +370,16 @@ function App() {
 
   // ── Imágenes del ticket seleccionado ─────────────────────────
   const [selectedImagenes, setSelectedImagenes] = useState([]); // [{id, mime_type, analisis, fecha, blobUrl}]
+  const [ticketDetalle, setTicketDetalle] = useState(null);     // ticket completo (trae `historial`)
   const blobUrlsRef = useRef([]); // para revocar al cambiar de ticket
 
   // ── Refs para notificaciones ──────────────────────────────────
   const notifGranted = useRef(false);
   const prevTicketIds = useRef(new Set()); // IDs vistos en el último poll
   const initialLoadDone = useRef(false);   // evita notificar en la carga inicial
+  const versionRef = useRef(null);         // última firma vista del centinela
+  const selectedIdRef = useRef(null);      // selectedId legible desde fetchData
+  const imgsCargadasRef = useRef("");      // IDs de fotos ya convertidas a blob
 
   // ── Estado de guías ──────────────────────────────────────────
   const [guias, setGuias] = useState([]);
@@ -321,7 +392,12 @@ function App() {
   const [whitelistActiva, setWhitelistActiva] = useState(false);
 
   // El ticket seleccionado se deriva del estado — se mantiene sincronizado con el polling
-  const ticketSeleccionado = selectedId ? tickets[selectedId] : null;
+  // El listado manda todos los campos escalares (siempre los más frescos) y el
+  // detalle aporta el `historial`, que ya no viaja en el listado.
+  const detalleListo = ticketDetalle?.id === selectedId;
+  const ticketSeleccionado = selectedId && tickets[selectedId]
+    ? { ...tickets[selectedId], historial: detalleListo ? ticketDetalle.historial : null }
+    : null;
 
   // ── Login / Registro ─────────────────────────────────────────
   const _guardarSesion = (t, nombre) => {
@@ -437,17 +513,39 @@ function App() {
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Imágenes del ticket seleccionado ─────────────────────────
-  const fetchTicketImagenes = async (ticketId) => {
+  // El ticket completo (con `historial` e `imagenes`) solo se pide al abrirlo,
+  // no en cada sincronización del listado.
+  const fetchTicketDetalle = async (ticketId) => {
     const t = localStorage.getItem("bf_token");
-    // Revocar blob URLs previas
-    blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
-    blobUrlsRef.current = [];
-    setSelectedImagenes([]);
     try {
       const res = await fetch(`${API}/tickets/${ticketId}`, { headers: { Authorization: `Bearer ${t}` } });
       const data = await res.json();
-      const imgs = data.imagenes || [];
-      if (!imgs.length) return;
+      if (data && data.id) setTicketDetalle(data);
+    } catch (e) { console.error("Error al cargar el detalle del ticket", e); }
+  };
+
+  useEffect(() => {
+    setTicketDetalle(null);
+    selectedIdRef.current = selectedId;
+    if (selectedId) fetchTicketDetalle(selectedId);
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Los blobs de las fotos solo se rebajan si cambió el conjunto de imágenes:
+  // el detalle se refresca en cada sincronización y volver a descargarlas cada
+  // vez costaría más que el problema que estamos resolviendo.
+  useEffect(() => {
+    const imgs = ticketDetalle?.id === selectedId ? (ticketDetalle.imagenes || []) : [];
+    const clave = imgs.map(i => i.id).join(",");
+    if (clave === imgsCargadasRef.current) return;
+    imgsCargadasRef.current = clave;
+
+    blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
+    blobUrlsRef.current = [];
+    if (!imgs.length) { setSelectedImagenes([]); return; }
+
+    let cancelado = false;
+    (async () => {
+      const t = localStorage.getItem("bf_token");
       const cargadas = await Promise.all(
         imgs.map(async (img) => {
           try {
@@ -459,14 +557,10 @@ function App() {
           } catch { return null; }
         })
       );
-      setSelectedImagenes(cargadas.filter(Boolean));
-    } catch (e) { console.error("Error al cargar imágenes", e); }
-  };
-
-  useEffect(() => {
-    if (selectedId) fetchTicketImagenes(selectedId);
-    else { blobUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); blobUrlsRef.current = []; setSelectedImagenes([]); }
-  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+      if (!cancelado) setSelectedImagenes(cargadas.filter(Boolean));
+    })();
+    return () => { cancelado = true; };
+  }, [ticketDetalle, selectedId]);
 
   // ── Acciones sobre tickets ────────────────────────────────────
   const transicionarTicket = async (ticketId, nuevoEstado) => {
@@ -477,8 +571,7 @@ function App() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${currentToken}` },
         body: JSON.stringify({ estado: nuevoEstado, actor: "dashboard" }),
       });
-      fetchData();
-      fetchAuditLog(ticketId);
+      await Promise.all([fetchData(), fetchAuditLog(ticketId)]);
     } catch (e) {
       console.error("Error al transicionar ticket", e);
     }
@@ -492,7 +585,7 @@ function App() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${currentToken}` },
         body: JSON.stringify(campos),
       });
-      fetchData();
+      await fetchData();
     } catch (e) {
       console.error("Error al actualizar ticket", e);
     }
@@ -550,8 +643,8 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(campos),
     });
-    fetchGuias();
-    if (guiaSelId === id) fetchGuiaDetalle(id);
+    await fetchGuias();
+    if (guiaSelId === id) await fetchGuiaDetalle(id);
   };
 
   const crearPaso = async (guiaId, texto) => {
@@ -560,7 +653,7 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ texto }),
     });
-    fetchGuiaDetalle(guiaId);
+    await fetchGuiaDetalle(guiaId);
   };
 
   const actualizarPaso = async (guiaId, pasoId, campos) => {
@@ -569,12 +662,12 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(campos),
     });
-    fetchGuiaDetalle(guiaId);
+    await fetchGuiaDetalle(guiaId);
   };
 
   const eliminarPaso = async (guiaId, pasoId) => {
     await apiGuia(`/guias/${guiaId}/pasos/${pasoId}`, { method: "DELETE" });
-    fetchGuiaDetalle(guiaId);
+    await fetchGuiaDetalle(guiaId);
   };
 
   const subirImagenPaso = async (guiaId, pasoId, file) => {
@@ -586,12 +679,12 @@ function App() {
       headers: { Authorization: `Bearer ${t}` },
       body: form,
     });
-    fetchGuiaDetalle(guiaId);
+    await fetchGuiaDetalle(guiaId);
   };
 
   const eliminarImagenPaso = async (guiaId, pasoId) => {
     await apiGuia(`/guias/${guiaId}/pasos/${pasoId}/imagen`, { method: "DELETE" });
-    fetchGuiaDetalle(guiaId);
+    await fetchGuiaDetalle(guiaId);
   };
 
   // ── Gestión de configuración ──────────────────────────────────
@@ -636,8 +729,7 @@ function App() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
       body: JSON.stringify(campos),
     });
-    fetchConfigAgentes();
-    fetchData(); // refresca sidebar
+    await Promise.all([fetchConfigAgentes(), fetchData()]); // config + sidebar
   };
 
   const agregarUsuario = async (numero, nombre, area) => {
@@ -658,7 +750,7 @@ function App() {
       method: "DELETE",
       headers: { Authorization: `Bearer ${t}` },
     });
-    fetchConfigUsuarios();
+    await fetchConfigUsuarios();
   };
 
   // ── Data fetching ────────────────────────────────────────────
@@ -668,11 +760,15 @@ function App() {
     setSyncing(true);
     try {
       const headers = { Authorization: `Bearer ${currentToken}` };
-      const [ticketsRes, statsRes, agentesRes] = await Promise.all([
+      const [ticketsRes, statsRes, agentesRes, versionRes] = await Promise.all([
         fetch(`${API}/tickets`, { headers }).then((r) => r.json()),
         fetch(`${API}/stats`, { headers }).then((r) => r.json()),
         fetch(`${API}/agentes`, { headers }).then((r) => r.json()),
+        fetch(`${API}/tickets/version`, { headers }).then((r) => r.json()).catch(() => null),
       ]);
+      // Guardar la firma aquí deja al centinela en sincronía después de
+      // cualquier acción, y evita un refresco redundante en el siguiente tick.
+      if (versionRes?.v) versionRef.current = versionRes.v;
       const nuevosTickets = ticketsRes.tickets || ticketsRes || {};
       setTickets(nuevosTickets);
       setStats(statsRes || { total: 0, abiertos: 0, cerrados: 0 });
@@ -692,6 +788,11 @@ function App() {
       }
       prevTicketIds.current = new Set(Object.keys(nuevosTickets));
       initialLoadDone.current = true;
+
+      // El historial ya no viaja en el listado: si hay un ticket abierto se
+      // refresca su detalle para que la conversación siga llegando en vivo.
+      const abierto = selectedIdRef.current;
+      if (abierto && nuevosTickets[abierto]) await fetchTicketDetalle(abierto);
     } catch (e) {
       console.error("Error al sincronizar", e);
     } finally {
@@ -711,7 +812,7 @@ function App() {
         },
         body: JSON.stringify({ agente_id: agenteId }),
       });
-      fetchData();
+      await fetchData();
     } catch (e) {
       console.error("Error al asignar ticket", e);
     }
@@ -726,7 +827,7 @@ function App() {
         body: JSON.stringify({ texto, actor }),
       });
       const data = await res.json();
-      if (data.ok) fetchData(); // refresca historial
+      if (data.ok) await fetchData(); // refresca historial
       return data;
     } catch (e) {
       console.error("Error al enviar mensaje", e);
@@ -746,31 +847,45 @@ function App() {
         return;
       }
       setSelectedId(null);   // el detalle apunta a un ticket que ya no existe
-      fetchData();
+      await fetchData();
     } catch (e) {
       console.error("Error al eliminar ticket", e);
     }
   };
 
-  const cerrarTicket = async (id) => {
-    const currentToken = localStorage.getItem("bf_token");
-    try {
-      await fetch(`${API}/tickets/${id}/cerrar`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${currentToken}` },
-      });
-      fetchData();
-    } catch (e) {
-      console.error("Error al cerrar ticket", e);
-    }
-  };
-
-  // Arrancar polling solo cuando el usuario está autenticado
+  // Sincronización. En vez de bajar el listado completo cada 10 s se consulta
+  // un centinela de ~40 bytes (GET /tickets/version) y solo se refresca cuando
+  // algo cambió de verdad. Además se pausa con la pestaña oculta: un dashboard
+  // olvidado en segundo plano deja de consumir por completo.
   useEffect(() => {
     if (!autenticado) return;
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
+    let vivo = true;
+
+    const revisar = async () => {
+      if (!vivo || document.hidden) return;
+      const t = localStorage.getItem("bf_token");
+      if (!t) return;
+      try {
+        const res = await fetch(`${API}/tickets/version`, { headers: { Authorization: `Bearer ${t}` } });
+        const data = await res.json();
+        if (data?.v && data.v === versionRef.current) return; // nada cambió
+        await fetchData();
+      } catch (e) {
+        console.error("Error al revisar cambios", e);
+      }
+    };
+
+    fetchData(); // carga inicial completa (también fija versionRef)
+    const interval = setInterval(revisar, POLL_MS);
+    // Al volver a la pestaña, revisar de inmediato en vez de esperar el tick.
+    const alVolver = () => { if (!document.hidden) revisar(); };
+    document.addEventListener("visibilitychange", alVolver);
+
+    return () => {
+      vivo = false;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", alVolver);
+    };
   }, [autenticado]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Derivados ─────────────────────────────────────────────────── */
@@ -897,13 +1012,14 @@ function App() {
             onKeyDown={(e) => e.key === "Enter" && submitAuth()}
           />
           {loginError && <p className="bf-login-error">{loginError}</p>}
-          <button
+          <BotonAccion
             className="bf-resolve"
             style={{ width: "100%", marginTop: 4 }}
             onClick={submitAuth}
+            cargandoTexto={modoRegistro ? "Creando cuenta…" : "Entrando…"}
           >
             {modoRegistro ? "Crear cuenta" : "Entrar"}
-          </button>
+          </BotonAccion>
           <button
             style={{ background: "none", border: "none", color: "#607d8b", fontSize: 12, marginTop: 12, cursor: "pointer", textDecoration: "underline" }}
             onClick={() => { setModoRegistro(m => !m); setLoginError(""); }}
@@ -979,7 +1095,7 @@ function App() {
 
         <div className="bf-side-footer">
           <span className={`bf-live-dot${syncing ? " is-busy" : ""}`} />
-          <span style={{ flex: 1 }}>Sincronización · 10s</span>
+          <span style={{ flex: 1 }}>{syncing ? "Sincronizando…" : "Sincronización · 10s"}</span>
           <button
             className="bf-logout-btn"
             onClick={logout}
@@ -1062,7 +1178,6 @@ function App() {
             onEliminarPaso={eliminarPaso}
             onSubirImagen={subirImagenPaso}
             onEliminarImagen={eliminarImagenPaso}
-            onRefresh={fetchGuias}
           />
         ) : vista === "config" ? (
           <GestorConfig
@@ -1176,9 +1291,9 @@ function App() {
                 agentes={agentes}
                 auditLog={auditLog}
                 imagenes={selectedImagenes}
+                cargandoHistorial={!detalleListo}
                 onClose={() => setSelectedId(null)}
                 onAsignar={asignarTicket}
-                onResolver={cerrarTicket}
                 onTransicionar={transicionarTicket}
                 onEliminar={eliminarTicket}
                 onPatch={patchTicket}
@@ -1207,7 +1322,7 @@ function EstadoBadge({ estado }) {
   );
 }
 
-function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAsignar, onTransicionar, onEliminar, onPatch, onEnviarMensaje }) {
+function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHistorial = false, onClose, onAsignar, onTransicionar, onEliminar, onPatch, onEnviarMensaje }) {
   const [notas, setNotas] = useState(ticket.notas_internas || "");
   const [pasos, setPasos] = useState(ticket.pasos_intentados || "");
   const [prioridad, setPrioridad] = useState(ticket.prioridad || "normal");
@@ -1217,10 +1332,16 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
   const [msgFeedback, setMsgFeedback] = useState(null); // "ok" | "error"
   const agente = agentes[ticket.asignado_a];
   const transiciones = TRANSICIONES_UI[ticket.estado] || [];
+  // Los <select> no pasan por BotonAccion, así que llevan su propio estado.
+  const [asignando, ejecAsignar] = useAccion();
+  const [cambiandoPrioridad, ejecPrioridad] = useAccion();
 
   const guardarNotas = () => onPatch(ticket.id, { notas_internas: notas });
   const guardarPasos = () => onPatch(ticket.id, { pasos_intentados: pasos });
-  const cambiarPrioridad = (p) => { setPrioridad(p); onPatch(ticket.id, { prioridad: p }); };
+  const cambiarPrioridad = (p) => {
+    setPrioridad(p);
+    return ejecPrioridad(() => onPatch(ticket.id, { prioridad: p }));
+  };
 
   const enviar = async (texto) => {
     const t = texto || msgTexto;
@@ -1281,16 +1402,18 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
         </div>
         <div className="bf-meta" style={{ gridColumn: "span 2" }}>
           <span className="bf-meta-k">Prioridad</span>
-          <span className="bf-meta-v">
+          <span className="bf-meta-v bf-meta-v-row">
             <select
               className="bf-prio-select"
               value={prioridad}
+              disabled={cambiandoPrioridad}
               onChange={(e) => cambiarPrioridad(e.target.value)}
             >
               {["baja","normal","alta","urgente"].map((p) => (
                 <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
               ))}
             </select>
+            {cambiandoPrioridad && <IcSpinner size={13} className="bf-spin" />}
           </span>
         </div>
       </div>
@@ -1306,7 +1429,11 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
       {/* Historial */}
       <div className="bf-chat-label">Historial de conversación</div>
       <div className="bf-chat bf-scroll">
-        {(!ticket.historial || ticket.historial.length === 0) && (
+        {cargandoHistorial ? (
+          <p className="bf-chat-empty">
+            <IcSpinner size={14} className="bf-spin" /> Cargando conversación…
+          </p>
+        ) : (!ticket.historial || ticket.historial.length === 0) && (
           <p className="bf-chat-empty">Aún no hay mensajes en este ticket.</p>
         )}
         {ticket.historial?.map((msg, i) => {
@@ -1360,17 +1487,30 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
           rows={3}
         />
         {pasos !== (ticket.pasos_intentados || "") && (
-          <button className="bf-notas-save" onClick={guardarPasos}>Guardar pasos</button>
+          <BotonAccion className="bf-notas-save" onClick={guardarPasos} cargandoTexto="Guardando…">
+            Guardar pasos
+          </BotonAccion>
         )}
       </div>
 
       {/* Agente */}
       <div className="bf-assign">
-        <label className="bf-assign-label">Agente asignado</label>
+        <label className="bf-assign-label">
+          Agente asignado
+          {asignando && (
+            <span className="bf-cargando-inline">
+              <IcSpinner size={12} className="bf-spin" /> Asignando…
+            </span>
+          )}
+        </label>
         <div className="bf-select-wrap">
           <select
             value={ticket.asignado_a || ""}
-            onChange={(e) => onAsignar(ticket.id, e.target.value)}
+            disabled={asignando}
+            onChange={(e) => {
+              const id = e.target.value;
+              ejecAsignar(() => onAsignar(ticket.id, id));
+            }}
           >
             <option value="" disabled>Selecciona un agente…</option>
             {Object.entries(agentes).map(([id, a]) => (
@@ -1391,9 +1531,9 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
           rows={3}
         />
         {notas !== (ticket.notas_internas || "") && (
-          <button className="bf-notas-save" onClick={guardarNotas}>
+          <BotonAccion className="bf-notas-save" onClick={guardarNotas} cargandoTexto="Guardando…">
             Guardar notas
-          </button>
+          </BotonAccion>
         )}
       </div>
 
@@ -1404,15 +1544,16 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
         {/* Templates rápidos */}
         <div className="bf-msg-templates">
           {TEMPLATES_RAPIDOS.map(tpl => (
-            <button
+            <BotonAccion
               key={tpl.label}
               className="bf-msg-tpl-btn"
               onClick={() => enviar(tpl.texto)}
               disabled={msgEnviando}
               title={tpl.texto}
+              cargandoTexto="Enviando…"
             >
               {tpl.label}
-            </button>
+            </BotonAccion>
           ))}
         </div>
 
@@ -1426,14 +1567,15 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
             placeholder="Escribe un mensaje personalizado… (Cmd+Enter para enviar)"
             rows={2}
           />
-          <button
+          <BotonAccion
             className="bf-msg-send-btn"
             onClick={() => enviar()}
             disabled={!msgTexto.trim() || msgEnviando}
+            cargandoTexto="Enviando…"
           >
             <IcSend size={15} />
-            {msgEnviando ? "Enviando…" : "Enviar"}
-          </button>
+            Enviar
+          </BotonAccion>
         </div>
 
         {msgFeedback === "ok" && <p className="bf-msg-ok">Mensaje enviado ✓</p>}
@@ -1446,14 +1588,14 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
           <label className="bf-assign-label">Cambiar estado</label>
           <div className="bf-trans-btns">
             {transiciones.map(({ estado, label }) => (
-              <button
+              <BotonAccion
                 key={estado}
                 className="bf-trans-btn"
                 style={{ "--tc": TRANS_COLOR[estado] || "#5E7B79" }}
                 onClick={() => onTransicionar(ticket.id, estado)}
               >
                 {label}
-              </button>
+              </BotonAccion>
             ))}
           </div>
         </div>
@@ -1482,19 +1624,19 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], onClose, onAs
 
       {/* Zona peligrosa: borrar es irreversible, no deja rastro ni en auditoría */}
       <div className="bf-danger-zone">
-        <button
+        <BotonAccion
           className="bf-danger-btn"
-          onClick={() => {
-            if (window.confirm(
-              `¿Eliminar el ticket ${ticket.id} para siempre?\n\n` +
-              `Se borran también su historial de cambios y sus fotos. ` +
-              `No se puede deshacer.\n\n` +
-              `Si solo quieres sacarlo de la lista, usa "Archivar".`
-            )) onEliminar(ticket.id);
-          }}
+          onClick={() => onEliminar(ticket.id)}
+          cargandoTexto="Eliminando…"
+          confirmar={
+            `¿Eliminar el ticket ${ticket.id} para siempre?\n\n` +
+            `Se borran también su historial de cambios y sus fotos. ` +
+            `No se puede deshacer.\n\n` +
+            `Si solo quieres sacarlo de la lista, usa "Archivar".`
+          }
         >
           <IcTrash size={14} /> Eliminar ticket
-        </button>
+        </BotonAccion>
       </div>
     </>
   );
@@ -1520,7 +1662,6 @@ function ModalNuevaGuia({ onCrear, onCerrar }) {
   const [titulo, setTitulo] = useState("");
   const [desc, setDesc] = useState("");
   const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
 
   const idSlug = titulo.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "").slice(0, 40);
 
@@ -1532,10 +1673,8 @@ function ModalNuevaGuia({ onCrear, onCerrar }) {
   };
 
   const handleCrear = async () => {
-    setLoading(true);
     const finalId = id.trim() || idSlug || "guia_nueva";
     const res = await onCrear(finalId, titulo.trim(), desc.trim());
-    setLoading(false);
     if (res && res.ok) {
       onCerrar();
     } else {
@@ -1620,9 +1759,9 @@ function ModalNuevaGuia({ onCrear, onCerrar }) {
             {err && <p className="bf-guia-err" style={{ padding: "0 24px" }}>{err}</p>}
             <div className="bf-modal-footer">
               <button className="bf-guia-cancel-btn" onClick={() => { setPaso(1); setErr(""); }}>← Atrás</button>
-              <button className="bf-guia-save-btn" onClick={handleCrear} disabled={loading}>
-                {loading ? "Creando…" : "Crear guía"}
-              </button>
+              <BotonAccion className="bf-guia-save-btn" onClick={handleCrear} cargandoTexto="Creando…">
+                Crear guía
+              </BotonAccion>
             </div>
           </>
         )}
@@ -1721,32 +1860,41 @@ function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onElimi
   const [desc, setDesc] = useState(guia.descripcion_ticket || "");
   const [activo, setActivo] = useState(guia.activo !== false);
   const [metaDirty, setMetaDirty] = useState(false);
-  const [metaGuardando, setMetaGuardando] = useState(false);
 
   // Estado para agregar nuevo paso
   const [addOpen, setAddOpen] = useState(false);
   const [nuevoPasoTexto, setNuevoPasoTexto] = useState("");
   const [nuevoPasoPreview, setNuevoPasoPreview] = useState(null);
-  const [addLoading, setAddLoading] = useState(false);
 
   // Estado para editar paso existente
+  const [imgCacheBust, setImgCacheBust] = useState(Date.now());
   const [editPasoId, setEditPasoId] = useState(null);
   const [editPasoTexto, setEditPasoTexto] = useState("");
-  const [editLoading, setEditLoading] = useState(false);
+  // Qué paso está subiendo imagen ahora: así solo gira el botón de ese paso.
+  const [subiendoImgPasoId, setSubiendoImgPasoId] = useState(null);
 
   const guardarMeta = async () => {
-    setMetaGuardando(true);
     await onActualizar(guia.id, { titulo, descripcion_ticket: desc, activo });
-    setMetaGuardando(false);
     setMetaDirty(false);
+  };
+
+  const subirImagen = async (pasoId, file) => {
+    if (!file) return;
+    setSubiendoImgPasoId(pasoId);
+    try {
+      await onSubirImagen(guia.id, pasoId, file);
+      setImgCacheBust(Date.now());
+    } catch (e) {
+      console.error("Error al subir imagen", e);
+    } finally {
+      setSubiendoImgPasoId(null);
+    }
   };
 
   const iniciarEditPaso = (paso) => { setEditPasoId(paso.id); setEditPasoTexto(paso.texto); };
 
   const guardarPaso = async () => {
-    setEditLoading(true);
     await onActualizarPaso(guia.id, editPasoId, { texto: editPasoTexto });
-    setEditLoading(false);
     setEditPasoId(null);
   };
 
@@ -1758,30 +1906,23 @@ function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onElimi
 
   const agregarPaso = async () => {
     if (!nuevoPasoTexto.trim()) return;
-    setAddLoading(true);
     await onCrearPaso(guia.id, nuevoPasoTexto.trim());
     setNuevoPasoTexto("");
     if (nuevoPasoPreview) { URL.revokeObjectURL(nuevoPasoPreview); setNuevoPasoPreview(null); }
-    setAddLoading(false);
     setAddOpen(false);
   };
 
   const [menuPasoId, setMenuPasoId] = useState(null); // ID del paso con menú de eliminar abierto
-  const [imgCacheBust, setImgCacheBust] = useState(Date.now());
 
-  const confirmarEliminarPaso = (guiaId, pasoId) => {
-    if (window.confirm("¿Eliminar el paso completo (texto + imagen)? No se puede deshacer.")) {
-      onEliminarPaso(guiaId, pasoId);
-      setMenuPasoId(null);
-    }
+  const eliminarPaso = async (pasoId) => {
+    await onEliminarPaso(guia.id, pasoId);
+    setMenuPasoId(null);
   };
 
-  const confirmarEliminarImagen = (guiaId, pasoId) => {
-    if (window.confirm("¿Eliminar solo la imagen de este paso? El texto se conserva.")) {
-      onEliminarImagen(guiaId, pasoId);
-      setMenuPasoId(null);
-      setImgCacheBust(Date.now());
-    }
+  const eliminarImagen = async (pasoId) => {
+    await onEliminarImagen(guia.id, pasoId);
+    setMenuPasoId(null);
+    setImgCacheBust(Date.now());
   };
 
   return (
@@ -1832,9 +1973,9 @@ function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onElimi
           />
         </div>
         {metaDirty && (
-          <button className="bf-guia-save-btn" style={{ marginTop: 10 }} onClick={guardarMeta} disabled={metaGuardando}>
-            {metaGuardando ? "Guardando…" : "Guardar cambios"}
-          </button>
+          <BotonAccion className="bf-guia-save-btn" style={{ marginTop: 10 }} onClick={guardarMeta} cargandoTexto="Guardando…">
+            Guardar cambios
+          </BotonAccion>
         )}
       </div>
 
@@ -1872,9 +2013,9 @@ function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onElimi
                     />
                     <div className="bf-eg-paso-edit-hint">Usa *asteriscos* para <strong>negrita</strong> en WhatsApp</div>
                     <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      <button className="bf-guia-save-btn" onClick={guardarPaso} disabled={editLoading}>
-                        {editLoading ? "Guardando…" : "Guardar texto"}
-                      </button>
+                      <BotonAccion className="bf-guia-save-btn" onClick={guardarPaso} cargandoTexto="Guardando…">
+                        Guardar texto
+                      </BotonAccion>
                       <button className="bf-guia-cancel-btn" onClick={() => setEditPasoId(null)}>Cancelar</button>
                     </div>
                   </div>
@@ -1892,18 +2033,23 @@ function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onElimi
                           src={`${API}/guias/${guia.id}/pasos/${paso.orden}/imagen?t=${imgCacheBust}`}
                           alt={`Paso ${idx + 1}`}
                         />
-                        <label className="bf-eg-img-change-btn" onClick={() => setImgCacheBust(Date.now())}>
-                          <IcImage size={12} /> Cambiar imagen
+                        <label className="bf-eg-img-change-btn">
+                          {subiendoImgPasoId === paso.id
+                            ? <><IcSpinner size={12} className="bf-spin" /> Subiendo…</>
+                            : <><IcImage size={12} /> Cambiar imagen</>}
                           <input type="file" accept="image/*" style={{ display: "none" }}
-                            onChange={e => { if (e.target.files[0]) { onSubirImagen(guia.id, paso.id, e.target.files[0]); setImgCacheBust(Date.now()); }}} />
+                            disabled={subiendoImgPasoId === paso.id}
+                            onChange={e => subirImagen(paso.id, e.target.files[0])} />
                         </label>
                       </div>
                     ) : (
                       <label className="bf-eg-img-add-btn">
-                        <IcImage size={14} />
-                        <span>Agregar imagen</span>
+                        {subiendoImgPasoId === paso.id
+                          ? <><IcSpinner size={14} className="bf-spin" /><span>Subiendo…</span></>
+                          : <><IcImage size={14} /><span>Agregar imagen</span></>}
                         <input type="file" accept="image/*" style={{ display: "none" }}
-                          onChange={e => { if (e.target.files[0]) { onSubirImagen(guia.id, paso.id, e.target.files[0]); setImgCacheBust(Date.now()); }}} />
+                          disabled={subiendoImgPasoId === paso.id}
+                          onChange={e => subirImagen(paso.id, e.target.files[0])} />
                       </label>
                     )}
                   </div>
@@ -1926,13 +2072,23 @@ function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onElimi
                   {menuPasoId === paso.id && (
                     <div className="bf-eg-delete-menu">
                       {paso.tiene_imagen && (
-                        <button className="bf-eg-delete-opt" onClick={() => confirmarEliminarImagen(guia.id, paso.id)}>
+                        <BotonAccion
+                          className="bf-eg-delete-opt"
+                          onClick={() => eliminarImagen(paso.id)}
+                          cargandoTexto="Eliminando…"
+                          confirmar="¿Eliminar solo la imagen de este paso? El texto se conserva."
+                        >
                           <IcImage size={13} /> Eliminar foto
-                        </button>
+                        </BotonAccion>
                       )}
-                      <button className="bf-eg-delete-opt bf-eg-delete-opt-danger" onClick={() => confirmarEliminarPaso(guia.id, paso.id)}>
+                      <BotonAccion
+                        className="bf-eg-delete-opt bf-eg-delete-opt-danger"
+                        onClick={() => eliminarPaso(paso.id)}
+                        cargandoTexto="Eliminando…"
+                        confirmar="¿Eliminar el paso completo (texto + imagen)? No se puede deshacer."
+                      >
                         <IcTrash size={13} /> Eliminar paso
-                      </button>
+                      </BotonAccion>
                       <button className="bf-eg-delete-opt" style={{ color: "#888" }} onClick={() => setMenuPasoId(null)}>
                         Cancelar
                       </button>
@@ -1983,9 +2139,10 @@ function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onElimi
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button className="bf-guia-save-btn" onClick={agregarPaso} disabled={!nuevoPasoTexto.trim() || addLoading}>
-                {addLoading ? "Agregando…" : <><IcPlus size={13} /> Agregar paso</>}
-              </button>
+              <BotonAccion className="bf-guia-save-btn" onClick={agregarPaso}
+                disabled={!nuevoPasoTexto.trim()} cargandoTexto="Agregando…">
+                <IcPlus size={13} /> Agregar paso
+              </BotonAccion>
               <button className="bf-guia-cancel-btn" onClick={() => {
                 setAddOpen(false); setNuevoPasoTexto("");
                 if (nuevoPasoPreview) { URL.revokeObjectURL(nuevoPasoPreview); setNuevoPasoPreview(null); }
@@ -2049,8 +2206,8 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
     setEditAgenteCampos({ nombre: a.nombre, whatsapp: a.whatsapp, notificar: a.notificar, activo: a.activo });
   };
 
-  const guardarAgente = () => {
-    onActualizarAgente(editAgenteId, editAgenteCampos);
+  const guardarAgente = async () => {
+    await onActualizarAgente(editAgenteId, editAgenteCampos);
     setEditAgenteId(null);
   };
 
@@ -2080,7 +2237,9 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
               </div>
               {errAgente && <p className="bf-guia-err">{errAgente}</p>}
               <div style={{ display: "flex", gap: 8 }}>
-                <button className="bf-guia-save-btn" onClick={handleCrearAgente}>Crear</button>
+                <BotonAccion className="bf-guia-save-btn" onClick={handleCrearAgente} cargandoTexto="Creando…">
+                  Crear
+                </BotonAccion>
                 <button className="bf-guia-cancel-btn" onClick={() => { setCreandoAgente(false); setErrAgente(""); }}>Cancelar</button>
               </div>
             </div>
@@ -2111,7 +2270,9 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
                     </label>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button className="bf-guia-save-btn" onClick={guardarAgente}>Guardar</button>
+                    <BotonAccion className="bf-guia-save-btn" onClick={guardarAgente} cargandoTexto="Guardando…">
+                      Guardar
+                    </BotonAccion>
                     <button className="bf-guia-cancel-btn" onClick={() => setEditAgenteId(null)}>Cancelar</button>
                   </div>
                 </div>
@@ -2170,7 +2331,9 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
               <input className="bf-guia-input" placeholder="Área / Departamento (opcional)" value={nuevoUArea} onChange={e => setNuevoUArea(e.target.value)} />
               {errUsuario && <p className="bf-guia-err">{errUsuario}</p>}
               <div style={{ display: "flex", gap: 8 }}>
-                <button className="bf-guia-save-btn" onClick={handleCrearUsuario}>Agregar</button>
+                <BotonAccion className="bf-guia-save-btn" onClick={handleCrearUsuario} cargandoTexto="Agregando…">
+                  Agregar
+                </BotonAccion>
                 <button className="bf-guia-cancel-btn" onClick={() => { setCreandoUsuario(false); setErrUsuario(""); }}>Cancelar</button>
               </div>
             </div>
@@ -2195,13 +2358,15 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
                 </span>
               </div>
               {u.activo && (
-                <button
+                <BotonAccion
                   className="bf-icon-btn bf-icon-btn-danger"
                   onClick={() => onDesactivarUsuario(u.numero)}
                   title="Desactivar acceso"
+                  cargandoTexto=""
+                  confirmar={`¿Quitar a ${u.nombre} (+${u.numero}) de la whitelist?`}
                 >
                   <IcTrash size={14} />
-                </button>
+                </BotonAccion>
               )}
             </div>
           ))}
@@ -2351,6 +2516,9 @@ const CSS = `
 .bf-sync:hover:not(:disabled){border-color:${C.azulLight};background:${C.surfaceAlt}}
 .bf-sync:disabled{opacity:.65;cursor:default}
 .bf-spin{animation:bf-spin .9s linear infinite}
+.bf-btn-cargando{display:inline-flex;align-items:center;gap:6px}
+.bf-cargando-inline{display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:11px;font-weight:600;color:${C.textMuted};text-transform:none;letter-spacing:0}
+.bf-meta-v-row{display:flex;align-items:center;gap:7px}
 @keyframes bf-spin{to{transform:rotate(360deg)}}
 
 /* ── KPIs ── */
@@ -2434,7 +2602,7 @@ const CSS = `
 
 .bf-chat-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:${C.textMuted};margin-bottom:12px}
 .bf-chat{background:${C.surfaceAlt};border:1px solid ${C.border};border-radius:16px;padding:16px;max-height:300px;overflow-y:auto;margin-bottom:22px}
-.bf-chat-empty{font-size:13px;color:${C.textFaint};text-align:center;padding:24px 0}
+.bf-chat-empty{display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;color:${C.textFaint};text-align:center;padding:24px 0}
 .bf-msg-row{display:flex;margin-bottom:12px}
 .bf-msg-row.is-user{justify-content:flex-end}
 .bf-msg-row:last-child{margin-bottom:0}
