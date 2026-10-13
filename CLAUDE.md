@@ -21,6 +21,52 @@ npm test -- --watchAll=false  # Run tests once
 
 Single-page Create React App (React 19). No routing, no state management library. The entire application lives in **`src/App.js`** — there is intentionally **no component file split**.
 
+### Two applications, one build
+
+`App.js` renders **two different products**, chosen by the signed-in person's role:
+
+```
+login → GET /auth/yo → perfil.es_ti ?  dashboard de TI (the work queue)
+                                     :  <PortalUsuario/>  (raise + follow my tickets)
+```
+
+- `perfil` — `{email, nombre, rol, area, whatsapp, es_ti}`; filled by `/auth/yo` on boot
+  or by the login/registro response.
+- `esTI` — derived once, right next to `perfil`. **It gates the TI-only effects**: the
+  sentinel polling and the browser notifications. Without that gate the portal would fire
+  a 403 request every 10 seconds.
+- The render branch (`if (perfil && !perfil.es_ti) return <PortalUsuario/>`) only *picks a
+  view*. The real authorization is the backend's 403 — never rely on the branch for it.
+- Boot validates the stored token against **`/auth/yo`, not `/stats`**: `/stats` is IT-only
+  now and would 403 an administrative user with a perfectly good session, bouncing them to
+  the login screen on every reload.
+
+### PortalUsuario — what an administrative user sees
+
+One screen, two columns: raise a ticket on the left, "Mis tickets" on the right (the
+detail replaces the list in place — no modal). Above both, in priority order: the
+`WAITING_FOR_USER` alert, then the WhatsApp linking invitation.
+
+| Piece | Why it's there |
+|---|---|
+| `ESTADO_USUARIO` | Translates machine states into the user's language. `WAITING_FOR_USER` reads "Te preguntaron"; the raw state is **never** shown. Each entry carries `sigue` — whose court the ball is in |
+| `asignado_nombre` | The technician's name, not their id. "Carlos Méndez lo está atendiendo" is the single piece of information that prevents most "¿cómo va mi ticket?" interruptions |
+| One required field | The old system was a single input. The temptation when modernizing is eight mandatory fields; people read that as a downgrade and go back to phoning IT. Only `descripcion` is required — the category is inferred, the area comes from the profile |
+| Folio on success | A big `BFX-0301` the user can quote. The old system gave them nothing to refer to |
+| Linking invitation | Framed as "useful when you *can't* use this page" — that's what makes WhatsApp worth keeping for staff who all have computers |
+| 20s refresh | One person's tickets, not the whole queue, so no sentinel needed. Pauses on `document.hidden` like the IT dashboard |
+
+Portal styles are the `bf-pt-*` block at the end of the `CSS` string, built from the same
+`C` palette.
+
+### Role-aware test mocks
+
+`global.fetch` **must answer `/auth/yo`** or the app can't decide which view to render and
+every dashboard test renders the portal into an empty div. `App.test.js` and
+`Conversacion.test.js` return `es_ti: true`; `Portal.test.js` returns `es_ti: false` and
+asserts the portal never touches an IT endpoint (filtering out `/mi/*`, which also ends in
+`/tickets`).
+
 ### Module-level constants
 
 | Constant | Purpose |
@@ -120,11 +166,17 @@ Consequences to keep in mind when editing:
 | `GestorGuias` | Guide management view: list panel + editor panel side by side. |
 | `EditorGuia` | Guide step editor: metadata, step list with inline edit, image upload per step. |
 | `GestorConfig` | Configuration view: agents panel + whitelist panel side by side. |
+| `PortalUsuario` | The end-user app: raise a ticket, follow mine, link WhatsApp. Rendered instead of everything above when `rol === "usuario"`. |
+| `FilaPortal` | One row in "Mis tickets" — folio, user-facing state, channel, age, who's on it. |
+| `DetallePortal` | Ticket detail for the requester: status in plain words, conversation, reply box (hidden on terminal states). |
 
 ### App State
 
 #### Auth
 - `token` / `autenticado` / `loginChecking` — auth flow; token stored in `localStorage` as `bf_token`
+- `perfil` — `{email, nombre, rol, area, whatsapp, es_ti}` or null; decides which app renders
+- `esTI` — derived from `perfil.es_ti`; gates polling and notifications
+- `areaInput` — area field on the registration form; lands in the profile and from there on every ticket
 
 #### Tickets
 - `tickets` — `{[id]: ticket}` object; updated by 10s polling
@@ -199,7 +251,19 @@ Base URL: `REACT_APP_API_URL` env var.
 | Method | Endpoint | Notes |
 |--------|----------|-------|
 | GET | `/health` | Public health check |
-| GET | `/tickets` | `?estado&prioridad&page&limit` |
+| POST | `/auth/login` | `{email, password}` → `{token, nombre, rol, email, area, whatsapp}` |
+| POST | `/auth/registro` | `{email, nombre, password, area?}` — enforces the company domain |
+| GET | `/auth/yo` | Who am I + `es_ti`; called on boot to validate the token and pick the view |
+| GET | `/mi/perfil` | Portal: account + linking status + category list |
+| POST | `/mi/vinculacion` | Portal: linking code + `wa.me` link |
+| DELETE | `/mi/vinculacion` | Portal: unlink |
+| GET | `/mi/tickets` | Portal: my tickets, both channels, with `asignado_nombre` |
+| GET | `/mi/tickets/:id` | Portal: one of mine (404 if it isn't) |
+| POST | `/mi/tickets` | Portal: `{descripcion, categoria?, activo?}` |
+| POST | `/mi/tickets/:id/mensaje` | Portal: reply to IT |
+| GET | `/personas` | Admin only: list accounts |
+| PATCH | `/personas/:email` | Admin only: `nombre`, `rol`, `area` |
+| GET | `/tickets` | `?estado&prioridad&page&limit` — **IT only (403 for `rol: usuario`)** |
 | GET | `/tickets/:id` | Single ticket + `imagenes: [{id, mime_type, analisis, fecha}]` |
 | PATCH | `/tickets/:id` | `notas_internas`, `prioridad`, `resumen_ia`, `pasos_intentados` |
 | POST | `/tickets/:id/transicion` | `{estado, actor?, notas?}` |
@@ -230,7 +294,8 @@ Base URL: `REACT_APP_API_URL` env var.
 ```js
 {
   id: string,                  // "BFX-0001"
-  numero: string,              // WhatsApp number (display as +{numero})
+  numero: string,              // WhatsApp number (display as +{numero}); "" for portal
+                               // tickets with no linked WhatsApp — check before using it
   nombre: string,
   categoria: string,
   descripcion: string | null,
@@ -240,6 +305,8 @@ Base URL: `REACT_APP_API_URL` env var.
   pasos_intentados: string | null,
   notas_internas: string | null,
   historial: [{ role: "user" | "assistant", content: string }],
+  solicitante_email: string | null,  // joins a person's tickets across both channels
+  asignado_nombre?: string | null,   // only on /mi/* — the technician's name, for the user
   estado: "OPEN" | "ASSIGNED" | "IN_PROGRESS" | "WAITING_FOR_USER" | "RESOLVED" | "CLOSED" | "REOPENED",
   asignado_a: string | null,   // agente id
   fecha: string,               // "dd/mm/yyyy HH:MM"

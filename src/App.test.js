@@ -37,12 +37,17 @@ const AGENTES = {
   agente_luis:   { nombre:"Luis Espinosa",   whatsapp:"524777349702", notificar:true, activo:true },
 };
 
+const YO_TI = { email:"luis@bioflex.com", nombre:"Luis Espinosa", rol:"admin",
+  area:null, whatsapp:null, es_ti:true };
+
 beforeEach(() => {
   localStorage.setItem("bf_token", "tok");
   localStorage.setItem("bf_nombre", "Luis Espinosa");
   global.fetch = jest.fn((url) => {
     const u = String(url);
-    const json = u.includes("/tickets/version") ? { v: "5-2026-08-25T18:00:00" }
+    // /auth/yo decide qué app se pinta: estas pruebas son del dashboard de TI.
+    const json = u.includes("/auth/yo")           ? YO_TI
+      : u.includes("/tickets/version") ? { v: "5-2026-08-25T18:00:00" }
       : u.includes("/agentes")                  ? AGENTES
       : u.match(/\/tickets\/BFX-/)              ? { ...Object.values(TICKETS)[0], historial: [], imagenes: [] }
       : u.includes("/tickets")                  ? { tickets: TICKETS, total: 5, page: 1, pages: 1 }
@@ -138,4 +143,25 @@ test("sin nombre de agente en sesión, no se ofrece 'Tomar yo'", async () => {
   expect(within(grupo("Sin atender")).queryByText("Tomar yo")).toBeNull();
   // pero el selector de asignación sigue disponible
   expect(grupo("Sin atender").querySelector(".bf-accion-select select")).toBeTruthy();
+});
+
+test("un ticket del portal se identifica por correo, no por un '+' vacío", async () => {
+  // Los tickets web sin WhatsApp vinculado llegan con numero:"" — el dashboard
+  // tiene que mostrar algo que identifique a la persona, no un "+" solo.
+  TICKETS["BFX-0050"] = { id:"BFX-0050", numero:"", solicitante_email:"laura@bioflex.com",
+    nombre:"Laura Ortiz", estado:"OPEN", asignado_a:null, area:"Contabilidad", maquina:null,
+    prioridad:"normal", categoria:"🔑 Accesos", canal:"web",
+    preview:"No puedo entrar al correo", descripcion:"No puedo entrar al correo",
+    fecha:"12/10/2026 09:15", fecha_iso:hace(5), fecha_cierre:null, fecha_cierre_iso:null,
+    pasos_intentados:null, notas_internas:null };
+
+  render(<App />);
+  await waitFor(() => expect(document.querySelector(".bf-fila-id")).toBeInTheDocument());
+
+  const fila = [...document.querySelectorAll(".bf-fila")]
+    .find((f) => f.textContent.includes("BFX-0050"));
+  expect(fila).toHaveTextContent("laura@bioflex.com");
+  expect(fila.querySelector(".bf-fila-quien").textContent).not.toMatch(/·\s*\+\s*$/);
+
+  delete TICKETS["BFX-0050"];
 });

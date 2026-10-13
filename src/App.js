@@ -40,6 +40,11 @@ const iniciales = (nombre = "") =>
     .map((p) => p[0]?.toUpperCase() || "")
     .join("") || "?";
 
+// Cómo se contacta al solicitante. Los tickets del portal sin WhatsApp
+// vinculado traen `numero: ""`, y "+" a secas no le dice nada a nadie.
+const contactoDe = (t) =>
+  t?.numero ? `+${t.numero}` : (t?.solicitante_email || "sin contacto directo");
+
 const AVATAR_COLORS = ["#D06430", "#2E6E69", "#B5781C", "#5C8A95", "#A03455"];
 const colorPara = (key = "") => {
   let h = 0;
@@ -66,6 +71,7 @@ const POLL_MS = 10000;
    El tiempo de espera es el dato que manda esta pantalla, así que se
    calcula y se colorea aquí, no en cada componente. */
 const UNA_HORA = 60 * 60 * 1000;
+
 const ESCALA_EDAD = [
   { max: UNA_HORA,     color: "#B5781C" }, // menos de 1 h — recién llegado
   { max: 4 * UNA_HORA, color: "#A04E28" }, // menos de 4 h — ya pesa
@@ -88,8 +94,11 @@ const textoEdad = (ms) => {
   return `${Math.floor(h / 24)} d`;
 };
 
+// Los tres niveles se distinguen también en luminosidad, no sólo en matiz:
+// quien no separa rojo de verde sigue leyendo cuál ticket lleva más tiempo.
 const colorEdad = (ms) =>
   ms == null ? "#90A6A4" : ESCALA_EDAD.find((n) => ms < n.max).color;
+
 
 const esDeHoy = (iso) => {
   if (!iso) return false;
@@ -108,32 +117,16 @@ const grupoDe = (t) => {
   return "en_progreso";
 };
 
-const GRUPOS = [
-  { id: "sin_atender", label: "Sin atender",          dot: "#D06430",
-    sub: "Nadie los ha tomado todavía" },
-  { id: "en_progreso", label: "En progreso",          dot: "#85B6C4",
-    sub: "Con agente asignado" },
-  { id: "esperando",   label: "Esperando al usuario", dot: "#E2A343",
-    sub: "La pelota está del lado del operador" },
-  { id: "resueltos",   label: "Resueltos",            dot: "#4F9089",
-    sub: "Cerrados, del más reciente al más viejo" },
-];
-
-const TITULOS = {
-  sin_atender: "Sin atender",
-  en_progreso: "En progreso",
-  esperando: "Esperando al usuario",
-  resueltos: "Resueltos",
-};
-
 const ESTADOS_ACTIVOS_SET = new Set(["OPEN","ASSIGNED","IN_PROGRESS","WAITING_FOR_USER","REOPENED"]);
 const ESTADOS_TERMINALES_SET = new Set(["RESOLVED","CLOSED"]);
 
-// Transiciones disponibles por estado para mostrar en el dashboard
+// Transiciones disponibles por estado para mostrar en el dashboard.
+// OPEN y ASSIGNED ahora ofrecen "Pedir más info": en la mesa real se pregunta
+// antes de empezar a trabajar, y el backend acepta esa transición.
 const TRANSICIONES_UI = {
-  OPEN:             [{ estado:"ASSIGNED",         label:"Asignar" }, { estado:"IN_PROGRESS", label:"Iniciar" }, { estado:"CLOSED", label:"Archivar" }],
-  ASSIGNED:         [{ estado:"IN_PROGRESS",      label:"Iniciar atención" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
-  IN_PROGRESS:      [{ estado:"WAITING_FOR_USER", label:"Esperando usuario" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
+  OPEN:             [{ estado:"ASSIGNED",         label:"Asignar" }, { estado:"IN_PROGRESS", label:"Iniciar" }, { estado:"WAITING_FOR_USER", label:"Pedir más info" }, { estado:"CLOSED", label:"Archivar" }],
+  ASSIGNED:         [{ estado:"IN_PROGRESS",      label:"Iniciar atención" }, { estado:"WAITING_FOR_USER", label:"Pedir más info" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
+  IN_PROGRESS:      [{ estado:"WAITING_FOR_USER", label:"Pedir más info" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
   WAITING_FOR_USER: [{ estado:"IN_PROGRESS",      label:"Retomar" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
   RESOLVED:         [{ estado:"REOPENED",         label:"Reabrir" }, { estado:"CLOSED", label:"Archivar" }],
   CLOSED:           [{ estado:"REOPENED",         label:"Reabrir" }],
@@ -158,6 +151,25 @@ const TEMPLATES_RAPIDOS = [
   { label: "Reinicia equipo", texto: "Por favor reinicia tu equipo y vuelve a intentarlo. Si el problema persiste, avísanos." },
   { label: "Caso resuelto", texto: "Tu caso ha sido resuelto. Si el problema vuelve a ocurrir, responde este mensaje y con gusto te ayudamos. 🙌" },
 ];
+
+const TITULOS = {
+  sin_atender: "Sin atender",
+  en_progreso: "En progreso",
+  esperando: "Esperando al usuario",
+  resueltos: "Resueltos",
+};
+
+const GRUPOS = [
+  { id: "sin_atender", label: "Sin atender",          dot: "#D06430",
+    sub: "Nadie los ha tomado todavía" },
+  { id: "en_progreso", label: "En progreso",          dot: "#85B6C4",
+    sub: "Con agente asignado" },
+  { id: "esperando",   label: "Esperando al usuario", dot: "#E2A343",
+    sub: "La pelota está del lado del operador" },
+  { id: "resueltos",   label: "Resueltos",            dot: "#4F9089",
+    sub: "Cerrados, del más reciente al más viejo" },
+];
+
 
 const ESTADO_META = {
   OPEN:               { label: "Abierto",    bg: "rgba(226,163,67,0.14)",  color: "#B5781C", dot: "#E2A343" },
@@ -188,6 +200,17 @@ const Icon = ({ d, size = 18, stroke = "currentColor", fill = "none", ...p }) =>
     {d}
   </svg>
 );
+const IcRefresh = (p) => (
+  <Icon
+    {...p}
+    d={
+      <>
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+        <path d="M21 3v6h-6" />
+      </>
+    }
+  />
+);
 const IcCheckCircle = (p) => (
   <Icon
     {...p}
@@ -199,13 +222,21 @@ const IcCheckCircle = (p) => (
     }
   />
 );
-const IcRefresh = (p) => (
+const IcChat = (p) => (
+  <Icon
+    {...p}
+    d={
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    }
+  />
+);
+const IcSettings = (p) => (
   <Icon
     {...p}
     d={
       <>
-        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-        <path d="M21 3v6h-6" />
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
       </>
     }
   />
@@ -262,14 +293,6 @@ const IcX = (p) => (
     }
   />
 );
-const IcChat = (p) => (
-  <Icon
-    {...p}
-    d={
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    }
-  />
-);
 const IcSliders = (p) => (
   <Icon
     {...p}
@@ -298,17 +321,6 @@ const IcImage = (p) => (
 );
 const IcSend = (p) => (
   <Icon {...p} d={<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>} />
-);
-const IcSettings = (p) => (
-  <Icon
-    {...p}
-    d={
-      <>
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </>
-    }
-  />
 );
 const IcLogout = (p) => (
   <Icon
@@ -394,7 +406,14 @@ function App() {
   const [passwordInput, setPasswordInput] = useState("");
   const [nombreInput, setNombreInput] = useState("");
   const [modoRegistro, setModoRegistro] = useState(false);
+  const [areaInput, setAreaInput] = useState("");
   const [loginError, setLoginError] = useState("");
+  // Quién entró y qué puede ver. Lo llena /auth/yo al arrancar o el login.
+  const [perfil, setPerfil] = useState(null);
+  // Separa las dos aplicaciones: con TI corren el polling de la cola y las
+  // notificaciones; sin él se pinta el portal y nada de eso arranca.
+  const esTI = !!perfil?.es_ti;
+
   // loginChecking=true mientras verificamos el token guardado en localStorage
   const [loginChecking, setLoginChecking] = useState(
     !!localStorage.getItem("bf_token")
@@ -445,9 +464,20 @@ function App() {
     : null;
 
   // ── Login / Registro ─────────────────────────────────────────
-  const _guardarSesion = (t, nombre) => {
+  // `perfil` decide qué aplicación es esta: con rol de TI se pinta la cola de
+  // trabajo; con rol "usuario", el portal para levantar tickets. Es la misma
+  // build en los dos casos.
+  const _guardarSesion = (t, datos) => {
     localStorage.setItem("bf_token", t);
-    localStorage.setItem("bf_nombre", nombre);
+    localStorage.setItem("bf_nombre", datos.nombre || "");
+    setPerfil({
+      email: datos.email || null,
+      nombre: datos.nombre || "",
+      rol: datos.rol || "usuario",
+      area: datos.area || null,
+      whatsapp: datos.whatsapp || null,
+      es_ti: datos.es_ti ?? ["tecnico", "admin"].includes(datos.rol),
+    });
     setAutenticado(true);
     setLoginError("");
   };
@@ -464,7 +494,7 @@ function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        _guardarSesion(data.token, data.nombre);
+        _guardarSesion(data.token, data);
       } else {
         setLoginError(data.detail || "Correo o contraseña incorrectos.");
       }
@@ -489,11 +519,11 @@ function App() {
       const res = await fetch(`${API}/auth/registro`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, nombre }),
+        body: JSON.stringify({ email, password, nombre, area: areaInput.trim() || null }),
       });
       const data = await res.json();
       if (res.ok) {
-        _guardarSesion(data.token, data.nombre);
+        _guardarSesion(data.token, data);
       } else {
         setLoginError(data.detail || "Error al registrar.");
       }
@@ -506,6 +536,7 @@ function App() {
     localStorage.removeItem("bf_token");
     localStorage.removeItem("bf_nombre");
     setAutenticado(false);
+    setPerfil(null);
     setTickets({});
   };
 
@@ -516,13 +547,17 @@ function App() {
       setLoginChecking(false);
       return;
     }
-    fetch(`${API}/stats`, { headers: { Authorization: `Bearer ${saved}` } })
-      .then((r) => {
-        if (r.ok) {
-          setAutenticado(true);
-        } else {
+    // /auth/yo y no /stats: /stats ahora es solo para TI y le daría 403 a un
+    // administrativo con sesión válida, tirándolo al login en cada recarga.
+    fetch(`${API}/auth/yo`, { headers: { Authorization: `Bearer ${saved}` } })
+      .then(async (r) => {
+        if (!r.ok) {
           localStorage.removeItem("bf_token");
+          return;
         }
+        const yo = await r.json();
+        setPerfil(yo);
+        setAutenticado(true);
       })
       .catch(() => {})
       .finally(() => setLoginChecking(false));
@@ -532,13 +567,13 @@ function App() {
   useEffect(() => {
     // La segunda condición también necesita la guarda: sin ella, un navegador
     // sin la API de notificaciones tira toda la app al montar.
-    if (!autenticado || !("Notification" in window)) return;
+    if (!autenticado || !esTI || !("Notification" in window)) return;
     if (Notification.permission === "default") {
       Notification.requestPermission().then(p => { notifGranted.current = p === "granted"; });
     } else if (Notification.permission === "granted") {
       notifGranted.current = true;
     }
-  }, [autenticado]);
+  }, [autenticado, esTI]);
 
   // ── Audit log ────────────────────────────────────────────────
   const fetchAuditLog = async (ticketId) => {
@@ -825,7 +860,7 @@ function App() {
         Object.values(nuevosTickets).forEach(t => {
           if (t.estado === "OPEN" && !t.asignado_a && !prevTicketIds.current.has(t.id)) {
             new Notification("Nuevo ticket sin asignar", {
-              body: `${t.id} · +${t.numero}`,
+              body: `${t.id} · ${contactoDe(t)}`,
               icon: "/favicon.ico",
               tag: t.id,
             });
@@ -904,7 +939,9 @@ function App() {
   // algo cambió de verdad. Además se pausa con la pestaña oculta: un dashboard
   // olvidado en segundo plano deja de consumir por completo.
   useEffect(() => {
-    if (!autenticado) return;
+    // Solo TI: /tickets y /tickets/version responden 403 a un administrativo,
+    // y sin esta guarda el portal haría una petición fallida cada 10 s.
+    if (!autenticado || !esTI) return;
     let vivo = true;
 
     const revisar = async () => {
@@ -932,12 +969,13 @@ function App() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", alVolver);
     };
-  }, [autenticado]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [autenticado, esTI]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const t = setInterval(() => setAhora(Date.now()), 30000);
     return () => clearInterval(t);
   }, []);
+
 
   /* Derivados ─────────────────────────────────────────────────── */
   const arr = useMemo(() => Object.values(tickets || {}), [tickets]);
@@ -977,6 +1015,8 @@ function App() {
       (!areaFiltro || t.area === areaFiltro) &&
       (!q || String(t.numero).includes(q) ||
         String(t.id).toLowerCase().includes(q) ||
+        String(t.nombre || "").toLowerCase().includes(q) ||
+        String(t.solicitante_email || "").toLowerCase().includes(q) ||
         String(t.maquina || "").toLowerCase().includes(q) ||
         String(t.area || "").toLowerCase().includes(q));
     const out = {};
@@ -1018,17 +1058,31 @@ function App() {
           <div className="bf-logo-box">b</div>
           <h1 className="bf-login-title">bioflex</h1>
           <p className="bf-login-sub">
-            {modoRegistro ? "Crear cuenta — Mesa de Soporte TI" : "Mesa de Soporte TI — Acceso restringido"}
+            {modoRegistro
+              ? "Crear cuenta con tu correo de la empresa"
+              : "Mesa de Soporte TI"}
           </p>
           {modoRegistro && (
-            <input
-              type="text"
-              className="bf-login-input"
-              placeholder="Nombre completo"
-              value={nombreInput}
-              onChange={(e) => setNombreInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submitAuth()}
-            />
+            <>
+              <input
+                type="text"
+                className="bf-login-input"
+                placeholder="Nombre completo"
+                value={nombreInput}
+                onChange={(e) => setNombreInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+              />
+              {/* Se guarda en el perfil y se copia a cada ticket, para no
+                  preguntar "¿dónde estás?" cada vez. */}
+              <input
+                type="text"
+                className="bf-login-input"
+                placeholder="Tu área (Contabilidad, RH, Compras…)"
+                value={areaInput}
+                onChange={(e) => setAreaInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+              />
+            </>
           )}
           <input
             type="email"
@@ -1065,6 +1119,13 @@ function App() {
         </div>
       </div>
     );
+  }
+
+  /* ── Portal del usuario final ───────────────────────────────── */
+  // Misma build, otra aplicación: un administrativo nunca ve la cola de TI.
+  // La autorización real está en el backend (403); esto solo elige la vista.
+  if (perfil && !perfil.es_ti) {
+    return <PortalUsuario perfil={perfil} onLogout={logout} />;
   }
 
   /* ── Dashboard principal ─────────────────────────────────────── */
@@ -1454,7 +1515,7 @@ function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbr
             <EstadoBadge estado={ticket.estado} />
           )}
           <span style={{ flex: 1 }} />
-          <span className="bf-fila-quien">{ticket.nombre} · +{ticket.numero}</span>
+          <span className="bf-fila-quien">{ticket.nombre} · {contactoDe(ticket)}</span>
         </div>
       </div>
     </div>
@@ -1483,6 +1544,8 @@ function FilaCompacta({ ticket, agentes, ahora, seleccionado, onAbrir }) {
     </div>
   );
 }
+
+
 
 function EstadoBadge({ estado }) {
   const meta = ESTADO_META[estado] || ESTADO_META["OPEN"];
@@ -1546,7 +1609,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           </button>
         </div>
         <p className="bf-detail-sub">
-          {[ticket.maquina || ticket.area, ticket.nombre, `+${ticket.numero}`]
+          {[ticket.maquina || ticket.area, ticket.nombre, contactoDe(ticket)]
             .filter(Boolean).join(" · ")}
         </p>
       </div>
@@ -1563,7 +1626,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
         </div>
         <div className="bf-meta">
           <span className="bf-meta-k"><IcPhone size={13} /> Usuario</span>
-          <span className="bf-meta-v">+{ticket.numero}</span>
+          <span className="bf-meta-v">{contactoDe(ticket)}</span>
         </div>
         <div className="bf-meta">
           <span className="bf-meta-k"><IcClock size={13} /> Apertura</span>
@@ -2592,6 +2655,491 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
 /* ──────────────────────────────────────────────────────────────
    Estilos
    ────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────
+   PORTAL DEL USUARIO FINAL
+   Lo que ve un administrativo: levantar un ticket y seguirle la
+   pista. No es el dashboard con cosas escondidas — es otra app
+   sobre la misma build, elegida por el rol en /auth/yo.
+   ────────────────────────────────────────────────────────────── */
+
+// El usuario no habla en estados de máquina. Cada uno se traduce a lo que
+// significa para él, y "qué sigue" le dice si la pelota está de su lado.
+const ESTADO_USUARIO = {
+  OPEN:             { label: "Recibido",        tono: "espera",  sigue: "Esperando que alguien de TI lo tome." },
+  ASSIGNED:         { label: "Asignado",        tono: "activo",  sigue: "Ya tiene dueño en TI." },
+  IN_PROGRESS:      { label: "En proceso",      tono: "activo",  sigue: "TI está trabajando en esto." },
+  WAITING_FOR_USER: { label: "Te preguntaron",  tono: "tuyo",    sigue: "Necesitan tu respuesta para seguir." },
+  REOPENED:         { label: "Reabierto",       tono: "activo",  sigue: "Lo retomaron porque el problema siguió." },
+  RESOLVED:         { label: "Resuelto",        tono: "listo",   sigue: "¿Quedó bien? Si no, dinos y lo reabrimos." },
+  CLOSED:           { label: "Cerrado",         tono: "listo",   sigue: "Este caso quedó archivado." },
+  abierto:          { label: "Recibido",        tono: "espera",  sigue: "Esperando que alguien de TI lo tome." },
+  cerrado:          { label: "Resuelto",        tono: "listo",   sigue: "Este caso quedó archivado." },
+};
+const metaUsuario = (e) => ESTADO_USUARIO[e] || { label: e || "—", tono: "espera", sigue: "" };
+
+function PortalUsuario({ perfil, onLogout }) {
+  const [miPerfil, setMiPerfil] = useState(null);
+  const [misTickets, setMisTickets] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [selId, setSelId] = useState(null);
+  const [detalle, setDetalle] = useState(null);
+  const [cargandoDetalle, setCargandoDetalle] = useState(false);
+  const [ahora, setAhora] = useState(Date.now());
+
+  // Formulario
+  const [desc, setDesc] = useState("");
+  const [categoria, setCategoria] = useState(null);
+  const [activo, setActivo] = useState("");
+  // Solo se pregunta cuando el perfil no trae área: el mismo criterio que en
+  // WhatsApp, para que ningún ticket llegue a TI sin saber de dónde viene.
+  const [areaTicket, setAreaTicket] = useState("");
+  const [formError, setFormError] = useState("");
+  const [exito, setExito] = useState(null);     // {id} del ticket recién creado
+
+  // Vinculación de WhatsApp
+  const [vinc, setVinc] = useState(null);       // {codigo, wa_link, mensaje, expira_minutos}
+  const [vincCerrado, setVincCerrado] = useState(false);
+
+  // Respuesta en el detalle
+  const [respuesta, setRespuesta] = useState("");
+  const [respFeedback, setRespFeedback] = useState(null);
+
+  const tok = () => localStorage.getItem("bf_token");
+  const headers = () => ({ Authorization: `Bearer ${tok()}` });
+
+  const cargarPerfil = async () => {
+    try {
+      const r = await fetch(`${API}/mi/perfil`, { headers: headers() });
+      if (r.ok) setMiPerfil(await r.json());
+    } catch (e) { console.error("Error al cargar perfil", e); }
+  };
+
+  const cargarTickets = async () => {
+    try {
+      const r = await fetch(`${API}/mi/tickets`, { headers: headers() });
+      if (r.ok) {
+        const data = await r.json();
+        setMisTickets(data.tickets || []);
+      }
+    } catch (e) { console.error("Error al cargar mis tickets", e); }
+    finally { setCargando(false); }
+  };
+
+  const cargarDetalle = async (id) => {
+    setCargandoDetalle(true);
+    try {
+      const r = await fetch(`${API}/mi/tickets/${id}`, { headers: headers() });
+      setDetalle(r.ok ? await r.json() : null);
+    } catch (e) { console.error("Error al cargar el ticket", e); setDetalle(null); }
+    finally { setCargandoDetalle(false); }
+  };
+
+  useEffect(() => { cargarPerfil(); cargarTickets(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresco ligero: son los tickets de una sola persona, no la cola completa.
+  // Se pausa con la pestaña oculta, igual que el dashboard de TI.
+  useEffect(() => {
+    const tick = () => { if (!document.hidden) { cargarTickets(); if (selId) cargarDetalle(selId); } };
+    const i = setInterval(tick, 20000);
+    const alVolver = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { clearInterval(i); document.removeEventListener("visibilitychange", alVolver); };
+  }, [selId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const i = setInterval(() => setAhora(Date.now()), 30000);
+    return () => clearInterval(i);
+  }, []);
+
+  useEffect(() => {
+    if (selId) cargarDetalle(selId); else setDetalle(null);
+  }, [selId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const crearTicket = async () => {
+    setFormError("");
+    if (desc.trim().length < 10) {
+      setFormError("Cuéntanos un poco más de lo que está pasando.");
+      return;
+    }
+    if (miPerfil && !miPerfil.area && !areaTicket.trim()) {
+      setFormError("Dinos de qué área eres para que TI sepa a dónde ir.");
+      return;
+    }
+    try {
+      const r = await fetch(`${API}/mi/tickets`, {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          descripcion: desc.trim(),
+          categoria: categoria || undefined,
+          activo: activo.trim() || undefined,
+          area: areaTicket.trim() || undefined,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setFormError(data.detail || "No se pudo registrar el ticket."); return; }
+      setDesc(""); setCategoria(null); setActivo(""); setAreaTicket("");
+      setExito({ id: data.id });
+      await cargarTickets();
+    } catch {
+      setFormError("No se pudo conectar con el servidor.");
+    }
+  };
+
+  const pedirCodigo = async () => {
+    try {
+      const r = await fetch(`${API}/mi/vinculacion`, { method: "POST", headers: headers() });
+      if (r.ok) setVinc(await r.json());
+    } catch (e) { console.error("Error al pedir el código", e); }
+  };
+
+  const enviarRespuesta = async () => {
+    if (!respuesta.trim() || !selId) return;
+    try {
+      const r = await fetch(`${API}/mi/tickets/${selId}/mensaje`, {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({ texto: respuesta.trim() }),
+      });
+      const data = await r.json();
+      if (r.ok) {
+        setRespuesta("");
+        setRespFeedback("ok");
+        await cargarDetalle(selId);
+        await cargarTickets();
+      } else {
+        setRespFeedback(data.detail || "No se pudo enviar.");
+      }
+      setTimeout(() => setRespFeedback(null), 3000);
+    } catch {
+      setRespFeedback("Error de red.");
+      setTimeout(() => setRespFeedback(null), 3000);
+    }
+  };
+
+  const abiertos = misTickets.filter((t) => ESTADOS_ACTIVOS_SET.has(t.estado));
+  const cerrados = misTickets.filter((t) => !ESTADOS_ACTIVOS_SET.has(t.estado));
+  const esperanTuRespuesta = abiertos.filter((t) => t.estado === "WAITING_FOR_USER");
+  const vinculado = miPerfil?.whatsapp_vinculado;
+  const cats = miPerfil?.categorias || [];
+
+  return (
+    <div className="bf-portal">
+      <style>{CSS}</style>
+
+      <header className="bf-pt-head">
+        <div className="bf-pt-brand">
+          <div className="bf-logo">b</div>
+          <div>
+            <div className="bf-brand-name">bioflex</div>
+            <div className="bf-brand-tag">Soporte TI</div>
+          </div>
+        </div>
+        <div className="bf-pt-user">
+          <div className="bf-pt-user-txt">
+            <strong>{perfil?.nombre}</strong>
+            <span>{miPerfil?.area || perfil?.area || "Sin área"}</span>
+          </div>
+          <button className="bf-pt-salir" onClick={onLogout}>Salir</button>
+        </div>
+      </header>
+
+      {/* Lo que necesita tu atención va arriba de todo */}
+      {esperanTuRespuesta.length > 0 && (
+        <div className="bf-pt-alerta">
+          <span className="bf-pt-alerta-dot" />
+          <span>
+            TI te preguntó algo en{" "}
+            {esperanTuRespuesta.map((t, i) => (
+              <span key={t.id}>
+                {i > 0 && ", "}
+                <button className="bf-pt-link" onClick={() => setSelId(t.id)}>{t.id}</button>
+              </span>
+            ))}
+            . Están esperando tu respuesta para seguir.
+          </span>
+        </div>
+      )}
+
+      {/* Vinculación de WhatsApp: un tap y queda */}
+      {miPerfil && !vinculado && !vincCerrado && (
+        <section className="bf-pt-vinc">
+          <div className="bf-pt-vinc-txt">
+            <h3>Levanta tickets desde WhatsApp</h3>
+            <p>
+              Útil justo cuando no puedes usar esta página: no prende tu computadora,
+              no tienes internet o no puedes entrar al correo.
+            </p>
+          </div>
+          {!vinc ? (
+            <div className="bf-pt-vinc-acc">
+              <BotonAccion className="bf-resolve" onClick={pedirCodigo} cargandoTexto="Generando…">
+                Vincular mi WhatsApp
+              </BotonAccion>
+              <button className="bf-pt-link" onClick={() => setVincCerrado(true)}>Después</button>
+            </div>
+          ) : (
+            <div className="bf-pt-vinc-codigo">
+              {vinc.wa_link ? (
+                <>
+                  <a className="bf-resolve bf-pt-wa" href={vinc.wa_link} target="_blank" rel="noreferrer">
+                    Abrir WhatsApp y enviar
+                  </a>
+                  <p className="bf-pt-hint">
+                    Se abre el chat con el mensaje <code>{vinc.mensaje}</code> ya escrito.
+                    Solo dale enviar. El código vence en {vinc.expira_minutos} minutos.
+                  </p>
+                </>
+              ) : (
+                <p className="bf-pt-hint">
+                  Mándale este mensaje al número de soporte de TI:{" "}
+                  <code>{vinc.mensaje}</code> — vence en {vinc.expira_minutos} minutos.
+                </p>
+              )}
+              <button className="bf-pt-link" onClick={pedirCodigo}>Generar otro código</button>
+            </div>
+          )}
+        </section>
+      )}
+
+      <main className="bf-pt-main">
+
+        {/* ── Levantar un ticket ───────────────────────────────── */}
+        <section className="bf-pt-card">
+          <h2 className="bf-pt-h2">¿En qué podemos ayudarte?</h2>
+
+          {exito ? (
+            <div className="bf-pt-exito">
+              <div className="bf-pt-exito-folio">{exito.id}</div>
+              <p>
+                Listo, ya lo registramos. Te avisamos en cuanto alguien de TI lo tome
+                {vinculado ? " por WhatsApp" : ""}.
+              </p>
+              <div className="bf-pt-exito-acc">
+                <button className="bf-resolve" onClick={() => { setExito(null); setSelId(exito.id); }}>
+                  Ver mi ticket
+                </button>
+                <button className="bf-pt-link" onClick={() => setExito(null)}>
+                  Levantar otro
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <textarea
+                className="bf-pt-textarea"
+                placeholder="Cuéntanos qué está pasando. Mientras más detalle, menos preguntas de regreso."
+                value={desc}
+                rows={5}
+                onChange={(e) => { setDesc(e.target.value); setFormError(""); }}
+              />
+
+              <div className="bf-pt-field">
+                <label>Sobre qué es <span className="bf-pt-opt">— si no eliges, lo deducimos</span></label>
+                <div className="bf-pt-chips">
+                  {cats.map((c) => (
+                    <button
+                      key={c}
+                      className={`bf-pt-chip${categoria === c ? " on" : ""}`}
+                      onClick={() => setCategoria(categoria === c ? null : c)}
+                      type="button"
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {miPerfil && !miPerfil.area && (
+                <div className="bf-pt-field">
+                  <label htmlFor="bf-area">¿De qué área eres?</label>
+                  <input
+                    id="bf-area"
+                    className="bf-pt-input"
+                    placeholder="Contabilidad, RH, Compras…"
+                    value={areaTicket}
+                    onChange={(e) => { setAreaTicket(e.target.value); setFormError(""); }}
+                  />
+                </div>
+              )}
+
+              <div className="bf-pt-field">
+                <label htmlFor="bf-activo">
+                  Equipo o sistema <span className="bf-pt-opt">— opcional</span>
+                </label>
+                <input
+                  id="bf-activo"
+                  className="bf-pt-input"
+                  placeholder="Mi laptop, la impresora del piso 2, SISPRO…"
+                  value={activo}
+                  onChange={(e) => setActivo(e.target.value)}
+                />
+              </div>
+
+              {formError && <p className="bf-login-error">{formError}</p>}
+
+              <BotonAccion
+                className="bf-resolve bf-pt-enviar"
+                onClick={crearTicket}
+                cargandoTexto="Registrando…"
+                disabled={desc.trim().length < 10 || (miPerfil && !miPerfil.area && !areaTicket.trim())}
+              >
+                Enviar
+              </BotonAccion>
+            </>
+          )}
+        </section>
+
+        {/* ── Mis tickets / detalle ────────────────────────────── */}
+        <section className="bf-pt-card">
+          {!selId ? (
+            <>
+              <h2 className="bf-pt-h2">
+                Mis tickets
+                {abiertos.length > 0 && <span className="bf-pt-contador">{abiertos.length} abierto{abiertos.length !== 1 ? "s" : ""}</span>}
+              </h2>
+
+              {cargando ? (
+                <p className="bf-pt-vacio">Cargando…</p>
+              ) : misTickets.length === 0 ? (
+                <p className="bf-pt-vacio">
+                  Todavía no has levantado ningún ticket. Cuando lo hagas, aquí puedes
+                  seguirle la pista sin preguntarle a nadie.
+                </p>
+              ) : (
+                <>
+                  {abiertos.map((t) => (
+                    <FilaPortal key={t.id} t={t} ahora={ahora} onAbrir={() => setSelId(t.id)} />
+                  ))}
+                  {cerrados.length > 0 && (
+                    <>
+                      <div className="bf-pt-sep">Cerrados</div>
+                      {cerrados.map((t) => (
+                        <FilaPortal key={t.id} t={t} ahora={ahora} onAbrir={() => setSelId(t.id)} />
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <DetallePortal
+              id={selId}
+              t={detalle}
+              cargando={cargandoDetalle}
+              respuesta={respuesta}
+              setRespuesta={setRespuesta}
+              feedback={respFeedback}
+              onEnviar={enviarRespuesta}
+              onVolver={() => { setSelId(null); setRespuesta(""); }}
+            />
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function FilaPortal({ t, ahora, onAbrir }) {
+  const m = metaUsuario(t.estado);
+  const ms = edadMs(t, ahora);
+  return (
+    <button className="bf-pt-fila" onClick={onAbrir}>
+      <div className="bf-pt-fila-top">
+        <span className="bf-pt-folio">{t.id}</span>
+        <span className={`bf-pt-estado t-${m.tono}`}>{m.label}</span>
+        {t.canal === "whatsapp" && <span className="bf-pt-canal">WhatsApp</span>}
+        <span className="bf-pt-edad">{textoEdad(ms)}</span>
+      </div>
+      <div className="bf-pt-fila-desc">{t.descripcion || ultimoMensaje(t)}</div>
+      <div className="bf-pt-fila-pie">
+        {t.asignado_nombre
+          ? `${t.asignado_nombre} lo está atendiendo`
+          : m.sigue}
+      </div>
+    </button>
+  );
+}
+
+function DetallePortal({ id, t, cargando, respuesta, setRespuesta, feedback, onEnviar, onVolver }) {
+  const m = t ? metaUsuario(t.estado) : null;
+  const puedeResponder = t && !ESTADOS_TERMINALES_SET.has(t.estado);
+
+  return (
+    <>
+      <div className="bf-pt-detalle-head">
+        <button className="bf-pt-link" onClick={onVolver}>← Mis tickets</button>
+        <span className="bf-pt-folio">{id}</span>
+      </div>
+
+      {cargando && !t ? (
+        <p className="bf-pt-vacio">Cargando…</p>
+      ) : !t ? (
+        <p className="bf-pt-vacio">No pudimos abrir este ticket.</p>
+      ) : (
+        <>
+          <div className="bf-pt-detalle-estado">
+            <span className={`bf-pt-estado t-${m.tono}`}>{m.label}</span>
+            <p>{t.asignado_nombre ? `${t.asignado_nombre} lo está atendiendo.` : m.sigue}</p>
+          </div>
+
+          <dl className="bf-pt-meta">
+            <div><dt>Levantado</dt><dd>{t.fecha}</dd></div>
+            <div><dt>Categoría</dt><dd>{t.categoria || "—"}</dd></div>
+            {t.maquina && <div><dt>Equipo</dt><dd>{t.maquina}</dd></div>}
+            <div><dt>Canal</dt><dd>{t.canal === "web" ? "Portal" : "WhatsApp"}</dd></div>
+            {t.fecha_cierre && <div><dt>Resuelto</dt><dd>{t.fecha_cierre}</dd></div>}
+          </dl>
+
+          <div className="bf-pt-sep">Conversación</div>
+          <div className="bf-pt-chat">
+            {(t.historial || []).length === 0 ? (
+              <p className="bf-pt-vacio">Sin mensajes todavía.</p>
+            ) : (
+              (t.historial || []).map((msg, i) => (
+                <div key={i} className={`bf-pt-msg ${msg.role === "user" ? "mio" : "ti"}`}>
+                  <WaText text={msg.content} />
+                </div>
+              ))
+            )}
+          </div>
+
+          {puedeResponder ? (
+            <div className="bf-pt-responder">
+              <textarea
+                className="bf-pt-textarea"
+                rows={3}
+                placeholder={t.estado === "WAITING_FOR_USER"
+                  ? "TI está esperando tu respuesta…"
+                  : "Agregar información para TI…"}
+                value={respuesta}
+                onChange={(e) => setRespuesta(e.target.value)}
+              />
+              <div className="bf-pt-responder-pie">
+                <BotonAccion
+                  className="bf-resolve"
+                  onClick={onEnviar}
+                  cargandoTexto="Enviando…"
+                  disabled={!respuesta.trim()}
+                >
+                  Enviar a TI
+                </BotonAccion>
+                {feedback === "ok" && <span className="bf-pt-ok">Enviado</span>}
+                {feedback && feedback !== "ok" && <span className="bf-login-error">{feedback}</span>}
+              </div>
+            </div>
+          ) : (
+            <p className="bf-pt-hint">
+              Este ticket ya está cerrado. Si el problema volvió, levanta uno nuevo y
+              menciona el folio {id}.
+            </p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
@@ -3261,6 +3809,145 @@ const CSS = `
   .bf-search{width:100%}
   .bf-header-actions{width:100%;flex-direction:column;align-items:stretch}
 }
+
+/* ══════════════════════════════════════════════════════════════
+   PORTAL DEL USUARIO FINAL
+   ══════════════════════════════════════════════════════════════ */
+.bf-portal{min-height:100vh;background:${C.bg};color:${C.text};
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+
+.bf-pt-head{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  flex-wrap:wrap;padding:16px 28px;background:${C.surface};
+  border-bottom:1px solid ${C.border}}
+.bf-pt-brand{display:flex;align-items:center;gap:12px}
+.bf-pt-user{display:flex;align-items:center;gap:14px}
+.bf-pt-user-txt{display:flex;flex-direction:column;line-height:1.3;text-align:right}
+.bf-pt-user-txt strong{font-size:13px;color:${C.text}}
+.bf-pt-user-txt span{font-size:11px;color:${C.textMuted}}
+.bf-pt-salir{background:none;border:1px solid ${C.border};color:${C.textMuted};
+  border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit}
+.bf-pt-salir:hover{border-color:${C.borderStrong};color:${C.text}}
+
+/* Lo que espera al usuario: arriba de todo, imposible de no ver */
+.bf-pt-alerta{display:flex;align-items:center;gap:10px;margin:0;
+  padding:13px 28px;background:rgba(208,100,48,0.10);
+  border-bottom:1px solid rgba(208,100,48,0.22);
+  font-size:13px;color:#8C4420}
+.bf-pt-alerta-dot{width:8px;height:8px;border-radius:50%;background:${C.naranja};
+  flex:none;animation:bf-pulso 2s ease-in-out infinite}
+@keyframes bf-pulso{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Vinculación de WhatsApp */
+.bf-pt-vinc{display:flex;align-items:center;justify-content:space-between;gap:20px;
+  flex-wrap:wrap;margin:20px 28px 0;padding:18px 22px;background:${C.surface};
+  border:1px solid ${C.border};border-left:3px solid ${C.azulLight};border-radius:12px}
+.bf-pt-vinc-txt h3{margin:0 0 4px;font-size:14px;font-weight:650;color:${C.text}}
+.bf-pt-vinc-txt p{margin:0;font-size:12.5px;color:${C.textMuted};max-width:62ch;line-height:1.5}
+.bf-pt-vinc-acc{display:flex;align-items:center;gap:14px;flex:none}
+.bf-pt-vinc-codigo{display:flex;flex-direction:column;gap:8px;align-items:flex-start;flex:none}
+.bf-pt-wa{text-decoration:none;display:inline-block}
+
+.bf-pt-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);
+  gap:20px;padding:20px 28px 40px;align-items:start;max-width:1280px;margin:0 auto}
+.bf-pt-card{background:${C.surface};border:1px solid ${C.border};border-radius:14px;
+  padding:22px 24px;display:flex;flex-direction:column;gap:16px}
+.bf-pt-h2{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em;color:${C.text};
+  display:flex;align-items:center;justify-content:space-between;gap:12px}
+.bf-pt-contador{font-size:11px;font-weight:600;color:${C.openText};
+  background:${C.openBg};border-radius:999px;padding:3px 10px}
+
+/* Formulario */
+.bf-pt-textarea{width:100%;border:1px solid ${C.border};border-radius:10px;
+  padding:12px 14px;font-size:14px;font-family:inherit;color:${C.text};
+  background:${C.surfaceAlt};resize:vertical;line-height:1.55;box-sizing:border-box}
+.bf-pt-textarea:focus{outline:none;border-color:${C.azulLight};background:${C.surface}}
+.bf-pt-input{width:100%;border:1px solid ${C.border};border-radius:10px;
+  padding:10px 13px;font-size:13.5px;font-family:inherit;color:${C.text};
+  background:${C.surfaceAlt};box-sizing:border-box}
+.bf-pt-input:focus{outline:none;border-color:${C.azulLight};background:${C.surface}}
+.bf-pt-field{display:flex;flex-direction:column;gap:8px}
+.bf-pt-field label{font-size:12.5px;font-weight:600;color:${C.text}}
+.bf-pt-opt{font-weight:400;color:${C.textFaint}}
+.bf-pt-chips{display:flex;flex-wrap:wrap;gap:7px}
+.bf-pt-chip{font-size:12.5px;padding:6px 13px;border-radius:999px;cursor:pointer;
+  border:1px solid ${C.border};background:${C.surface};color:${C.textMuted};
+  font-family:inherit;transition:all .12s}
+.bf-pt-chip:hover{border-color:${C.azulLight};color:${C.text}}
+.bf-pt-chip.on{background:${C.azulDark};border-color:${C.azulDark};color:#fff;font-weight:600}
+.bf-pt-enviar{align-self:flex-start;min-width:130px}
+.bf-pt-enviar:disabled{opacity:.45;cursor:not-allowed}
+
+/* Confirmación con folio: lo que el usuario puede citar */
+.bf-pt-exito{display:flex;flex-direction:column;gap:12px;align-items:flex-start;
+  padding:22px;background:${C.doneBg};border-radius:12px}
+.bf-pt-exito-folio{font-size:26px;font-weight:700;letter-spacing:-.02em;color:${C.doneText};
+  font-variant-numeric:tabular-nums}
+.bf-pt-exito p{margin:0;font-size:13.5px;color:${C.text};line-height:1.55}
+.bf-pt-exito-acc{display:flex;align-items:center;gap:16px;margin-top:4px}
+
+/* Lista de mis tickets */
+.bf-pt-fila{display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;
+  padding:14px 16px;border:1px solid ${C.border};border-radius:11px;
+  background:${C.surface};cursor:pointer;font-family:inherit;transition:all .12s}
+.bf-pt-fila:hover{border-color:${C.azulLight};background:${C.surfaceAlt}}
+.bf-pt-fila + .bf-pt-fila{margin-top:9px}
+.bf-pt-fila-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.bf-pt-folio{font-size:12.5px;font-weight:700;color:${C.text};
+  font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.bf-pt-estado{font-size:11px;font-weight:650;padding:3px 9px;border-radius:999px}
+.bf-pt-estado.t-espera{background:${C.openBg};color:${C.openText}}
+.bf-pt-estado.t-activo{background:rgba(133,182,196,0.20);color:#2E6E69}
+.bf-pt-estado.t-tuyo{background:rgba(208,100,48,0.14);color:#A04E28}
+.bf-pt-estado.t-listo{background:${C.doneBg};color:${C.doneText}}
+.bf-pt-canal{font-size:10.5px;color:${C.textFaint};border:1px solid ${C.border};
+  border-radius:4px;padding:1px 6px}
+.bf-pt-edad{margin-left:auto;font-size:11.5px;color:${C.textFaint};
+  font-variant-numeric:tabular-nums}
+.bf-pt-fila-desc{font-size:13.5px;color:${C.text};line-height:1.45;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bf-pt-fila-pie{font-size:11.5px;color:${C.textMuted}}
+
+.bf-pt-sep{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:${C.textFaint};padding-top:6px}
+.bf-pt-vacio{margin:0;font-size:13px;color:${C.textMuted};line-height:1.6}
+.bf-pt-hint{margin:0;font-size:12px;color:${C.textMuted};line-height:1.55;max-width:60ch}
+.bf-pt-hint code{background:${C.bg};border:1px solid ${C.border};border-radius:5px;
+  padding:1px 6px;font-size:12px;font-weight:600;color:${C.text}}
+.bf-pt-link{background:none;border:none;padding:0;color:${C.azulDark};font-size:12.5px;
+  cursor:pointer;text-decoration:underline;font-family:inherit}
+.bf-pt-link:hover{color:${C.naranja}}
+.bf-pt-ok{font-size:12px;color:${C.doneText};font-weight:600}
+
+/* Detalle */
+.bf-pt-detalle-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.bf-pt-detalle-estado{display:flex;flex-direction:column;gap:7px;align-items:flex-start;
+  padding:14px 16px;background:${C.surfaceAlt};border-radius:10px}
+.bf-pt-detalle-estado p{margin:0;font-size:13px;color:${C.text}}
+.bf-pt-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+  gap:12px;margin:0}
+.bf-pt-meta div{display:flex;flex-direction:column;gap:2px}
+.bf-pt-meta dt{font-size:10.5px;font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;color:${C.textFaint}}
+.bf-pt-meta dd{margin:0;font-size:13px;color:${C.text}}
+.bf-pt-chat{display:flex;flex-direction:column;gap:9px;max-height:360px;overflow-y:auto;
+  padding-right:4px}
+.bf-pt-msg{max-width:85%;padding:10px 13px;border-radius:12px;font-size:13px;
+  line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.bf-pt-msg.mio{align-self:flex-end;background:rgba(133,182,196,0.20);
+  border-bottom-right-radius:3px}
+.bf-pt-msg.ti{align-self:flex-start;background:${C.surfaceAlt};
+  border:1px solid ${C.border};border-bottom-left-radius:3px}
+.bf-pt-responder{display:flex;flex-direction:column;gap:10px}
+.bf-pt-responder-pie{display:flex;align-items:center;gap:14px}
+
+@media (max-width:900px){
+  .bf-pt-main{grid-template-columns:1fr;padding:16px}
+  .bf-pt-head{padding:14px 16px}
+  .bf-pt-alerta{padding:12px 16px}
+  .bf-pt-vinc{margin:16px 16px 0;flex-direction:column;align-items:flex-start}
+  .bf-pt-card{padding:18px 16px}
+}
+
 `;
 
 export default App;
