@@ -145,6 +145,9 @@ const TRANS_COLOR = {
   REOPENED:         "#B01A30",
 };
 
+// Valores de Ticket.satisfaccion (la encuesta de WhatsApp, ver CALIFICACIONES en db.py)
+const CALIFICACION_UI = { bien: "😀 Bien", regular: "😐 Regular", mal: "😞 Mal" };
+
 const TEMPLATES_RAPIDOS = [
   { label: "En atención",   texto: "Hola, tu caso ya está siendo atendido por nuestro equipo de TI. Te contactamos en breve. 👍" },
   { label: "¿Ya funcionó?", texto: "¿Pudiste resolver el problema? Por favor confirma para poder cerrar tu caso. ✅" },
@@ -399,9 +402,75 @@ function BotonAccion({ onClick, confirmar, cargandoTexto, children, disabled, ..
   );
 }
 
+/* Primer ingreso con la contraseña del sistema anterior ---------- */
+function CambiarPassword({ perfil, onListo, onLogout }) {
+  const [actual, setActual] = useState("");
+  const [nueva, setNueva] = useState("");
+  const [confirmar, setConfirmar] = useState("");
+  const [error, setError] = useState("");
+
+  const guardar = async () => {
+    setError("");
+    if (nueva.length < 8) return setError("La nueva contraseña debe tener al menos 8 caracteres.");
+    if (nueva !== confirmar) return setError("Las contraseñas nuevas no coinciden.");
+    try {
+      const res = await fetch(`${API}/mi/password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("bf_token")}`,
+        },
+        body: JSON.stringify({ actual, nueva }),
+      });
+      const data = await res.json();
+      if (res.ok) onListo();
+      else setError(data.detail || "No se pudo cambiar la contraseña.");
+    } catch {
+      setError("No se pudo conectar con el servidor.");
+    }
+  };
+
+  const enter = (e) => e.key === "Enter" && guardar();
+  return (
+    <div className="bf-app bf-login-wrap">
+      <style>{CSS}</style>
+      <div className="bf-login-card">
+        <div className="bf-logo-box">b</div>
+        <h1 className="bf-login-title">Hola, {(perfil.nombre || "").split(" ")[0]}</h1>
+        <p className="bf-login-sub">
+          Antes de continuar, cambia la contraseña que usabas en la mesa de ayuda anterior.
+        </p>
+        <input type="password" className="bf-login-input" placeholder="Contraseña actual"
+          autoComplete="current-password" value={actual} autoFocus
+          onChange={(e) => setActual(e.target.value)} onKeyDown={enter} />
+        <input type="password" className="bf-login-input" placeholder="Nueva contraseña (mínimo 8)"
+          autoComplete="new-password" value={nueva}
+          onChange={(e) => setNueva(e.target.value)} onKeyDown={enter} />
+        <input type="password" className="bf-login-input" placeholder="Repite la nueva contraseña"
+          autoComplete="new-password" value={confirmar}
+          onChange={(e) => setConfirmar(e.target.value)} onKeyDown={enter} />
+        {error && <p className="bf-login-error">{error}</p>}
+        <BotonAccion className="bf-resolve" style={{ width: "100%", marginTop: 4 }}
+          onClick={guardar} cargandoTexto="Guardando…">
+          Guardar y continuar
+        </BotonAccion>
+        <button
+          style={{ background: "none", border: "none", color: "#607d8b", fontSize: 12, marginTop: 12, cursor: "pointer", textDecoration: "underline" }}
+          onClick={onLogout}
+        >
+          Salir
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   // ── Autenticación ────────────────────────────────────────────
   const [autenticado, setAutenticado] = useState(false);
+  // Se entra con el usuario de la mesa de ayuda anterior ("jperez"); el correo
+  // solo se pide para crear una cuenta nueva.
+  const [usuarioInput, setUsuarioInput] = useState("");
   const [emailInput, setEmailInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [nombreInput, setNombreInput] = useState("");
@@ -471,7 +540,9 @@ function App() {
     localStorage.setItem("bf_token", t);
     localStorage.setItem("bf_nombre", datos.nombre || "");
     setPerfil({
+      usuario: datos.usuario || null,
       email: datos.email || null,
+      debe_cambiar_password: !!datos.debe_cambiar_password,
       nombre: datos.nombre || "",
       rol: datos.rol || "usuario",
       area: datos.area || null,
@@ -483,20 +554,20 @@ function App() {
   };
 
   const login = async () => {
-    const email = emailInput.trim().toLowerCase();
+    const usuario = usuarioInput.trim().toLowerCase();
     const password = passwordInput;
-    if (!email || !password) return;
+    if (!usuario || !password) return;
     try {
       const res = await fetch(`${API}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ usuario, password }),
       });
       const data = await res.json();
       if (res.ok) {
         _guardarSesion(data.token, data);
       } else {
-        setLoginError(data.detail || "Correo o contraseña incorrectos.");
+        setLoginError(data.detail || "Usuario o contraseña incorrectos.");
       }
     } catch {
       setLoginError("No se pudo conectar con el servidor.");
@@ -504,10 +575,11 @@ function App() {
   };
 
   const registro = async () => {
+    const usuario = usuarioInput.trim().toLowerCase();
     const email = emailInput.trim().toLowerCase();
     const password = passwordInput;
     const nombre = nombreInput.trim();
-    if (!email || !password || !nombre) {
+    if (!usuario || !email || !password || !nombre) {
       setLoginError("Completa todos los campos.");
       return;
     }
@@ -519,7 +591,7 @@ function App() {
       const res = await fetch(`${API}/auth/registro`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, nombre, area: areaInput.trim() || null }),
+        body: JSON.stringify({ usuario, email, password, nombre, area: areaInput.trim() || null }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -535,6 +607,11 @@ function App() {
   const logout = () => {
     localStorage.removeItem("bf_token");
     localStorage.removeItem("bf_nombre");
+    // En una computadora compartida, el siguiente no debe encontrar el usuario
+    // y la contraseña del anterior ya escritos en el formulario.
+    setUsuarioInput("");
+    setPasswordInput("");
+    setLoginError("");
     setAutenticado(false);
     setPerfil(null);
     setTickets({});
@@ -1059,11 +1136,30 @@ function App() {
           <h1 className="bf-login-title">bioflex</h1>
           <p className="bf-login-sub">
             {modoRegistro
-              ? "Crear cuenta con tu correo de la empresa"
+              ? "Crear cuenta nueva"
               : "Mesa de Soporte TI"}
           </p>
+          <input
+            type="text"
+            className="bf-login-input"
+            placeholder="Usuario"
+            autoCapitalize="none"
+            autoComplete="username"
+            value={usuarioInput}
+            onChange={(e) => setUsuarioInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+            autoFocus={!modoRegistro}
+          />
           {modoRegistro && (
             <>
+              <input
+                type="email"
+                className="bf-login-input"
+                placeholder="Correo de la empresa"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+              />
               <input
                 type="text"
                 className="bf-login-input"
@@ -1084,15 +1180,6 @@ function App() {
               />
             </>
           )}
-          <input
-            type="email"
-            className="bf-login-input"
-            placeholder="Correo electrónico"
-            value={emailInput}
-            onChange={(e) => setEmailInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitAuth()}
-            autoFocus={!modoRegistro}
-          />
           <input
             type="password"
             className="bf-login-input"
@@ -1118,6 +1205,19 @@ function App() {
           </button>
         </div>
       </div>
+    );
+  }
+
+  /* ── Contraseña heredada del sistema anterior ───────────────── */
+  // Venían en texto plano y el catálogo circuló como archivo: hasta que la
+  // cambie, la persona no pasa de aquí. El backend apaga la marca al cambiarla.
+  if (perfil?.debe_cambiar_password) {
+    return (
+      <CambiarPassword
+        perfil={perfil}
+        onListo={() => setPerfil((p) => ({ ...p, debe_cambiar_password: false }))}
+        onLogout={logout}
+      />
     );
   }
 
@@ -1661,6 +1761,20 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           </span>
         </div>
       </div>
+
+      {/* Encuesta: la contesta el usuario por WhatsApp al confirmar que quedó */}
+      {ticket.satisfaccion && (
+        <div className="bf-descripcion">
+          <div className="bf-chat-label">Satisfacción del usuario</div>
+          <p className="bf-desc-text">
+            <strong>{CALIFICACION_UI[ticket.satisfaccion] || ticket.satisfaccion}</strong>
+            {ticket.satisfaccion_fecha && <span style={{ color: C.textMuted }}> · {ticket.satisfaccion_fecha}</span>}
+          </p>
+          {ticket.satisfaccion_comentario && (
+            <p className="bf-desc-text">“{ticket.satisfaccion_comentario}”</p>
+          )}
+        </div>
+      )}
 
       {/* Descripción */}
       {(ticket.descripcion || ticket.resumen_ia) && (

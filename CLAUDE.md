@@ -41,6 +41,14 @@ login → GET /auth/yo → perfil.es_ti ?  dashboard de TI (the work queue)
   now and would 403 an administrative user with a perfectly good session, bouncing them to
   the login screen on every reload.
 
+### Login and the forced password change
+
+People sign in with their **username** from the previous help desk (`usuarioInput` →
+`POST /auth/login {usuario, password}`); the email field only appears when creating an
+account. If `perfil.debe_cambiar_password` is true (imported accounts — their old passwords
+were stored in plain text), `<CambiarPassword>` replaces the whole app until
+`POST /mi/password` succeeds. Tests: `Login.test.js`.
+
 ### PortalUsuario — what an administrative user sees
 
 One screen, two columns: raise a ticket on the left, "Mis tickets" on the right (the
@@ -251,8 +259,9 @@ Base URL: `REACT_APP_API_URL` env var.
 | Method | Endpoint | Notes |
 |--------|----------|-------|
 | GET | `/health` | Public health check |
-| POST | `/auth/login` | `{email, password}` → `{token, nombre, rol, email, area, whatsapp}` |
-| POST | `/auth/registro` | `{email, nombre, password, area?}` — enforces the company domain |
+| POST | `/auth/login` | `{usuario, password}` → `{token, nombre, rol, usuario, email, area, whatsapp, debe_cambiar_password}` |
+| POST | `/mi/password` | `{actual, nueva}` |
+| POST | `/auth/registro` | `{usuario, email, nombre, password, area?}` — enforces the company domain |
 | GET | `/auth/yo` | Who am I + `es_ti`; called on boot to validate the token and pick the view |
 | GET | `/mi/perfil` | Portal: account + linking status + category list |
 | POST | `/mi/vinculacion` | Portal: linking code + `wa.me` link |
