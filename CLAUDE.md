@@ -124,10 +124,10 @@ The tickets view is a **work queue grouped by urgency**, not a chronological lis
 | `en_progreso` | assigned, any other active state |
 | `resueltos` | terminal state |
 
-`filtro` holds the **focused** group (default `sin_atender`). The list renders all four:
-the focused one uses `<FilaExpandida>` (age, machine, inline Tomar/Asignar/Recordar), the
-rest collapse to `<FilaCompacta>` one-liners capped at 4 with a "ver los N restantes".
-Clicking any group header focuses it.
+`filtro` holds the **selected** group (default `sin_atender`), picked in the sidebar. The
+list renders **only that group** with `<FilaExpandida>` (age, machine, inline
+Tomar/Asignar/Recordar) — the other groups don't peek in, so the queue doesn't get crowded
+(Luis's call). An empty group shows "Nada en «…»" even when other groups have tickets.
 
 **Waiting time is the primary metric.** `edadMs`/`textoEdad`/`colorEdad` read `fecha_iso`
 (UTC, from `Ticket.fecha`) — never the display string `fecha`, which renders UTC as if it

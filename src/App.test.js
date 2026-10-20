@@ -1,4 +1,4 @@
-import { render, screen, within, waitFor } from "@testing-library/react";
+import { render, screen, within, waitFor, fireEvent } from "@testing-library/react";
 import App from "./App";
 
 const hace = (min) => new Date(Date.now() - min * 60000).toISOString();
@@ -105,11 +105,16 @@ test("la cola agrupa por urgencia y ordena lo más viejo primero", async () => {
   expect(within(sin).getByText("7 h")).toBeInTheDocument();
   expect(within(sin).getByText("8 min")).toBeInTheDocument();
 
-  // Los grupos no enfocados se comprimen a una línea
-  const prog = grupo("En progreso");
-  expect(prog.querySelectorAll(".bf-fila").length).toBe(0);
-  expect(prog.querySelectorAll(".bf-fila-min").length).toBe(1);
-  expect(within(prog).getByText("BFX-0041")).toBeInTheDocument();
+  // Solo se ve el grupo elegido: los demás no se asoman en la lista
+  expect(document.querySelectorAll(".bf-grupo").length).toBe(1);
+  expect(screen.queryByText("BFX-0041")).toBeNull();
+
+  // Al elegir otro grupo en la barra lateral, la lista cambia a ese
+  const cola = lateral().querySelector(".bf-cola");
+  fireEvent.click(within(cola).getByText("En progreso"));
+  await waitFor(() => expect(grupo("En progreso")).toBeTruthy());
+  expect([...document.querySelectorAll(".bf-fila-id")].map(e => e.textContent)).toEqual(["BFX-0041"]);
+  expect(grupo("Sin atender")).toBeFalsy();
 });
 
 test("un ticket sin dueño ofrece tomarlo sin abrir el detalle", async () => {

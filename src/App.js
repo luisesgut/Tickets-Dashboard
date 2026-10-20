@@ -1441,29 +1441,33 @@ function App() {
                   </p>
                 </div>
               ) : (
-                GRUPOS.map((g) => {
+                (() => {
+                  // Solo el grupo elegido en la barra lateral: los demás no se
+                  // asoman para que la lista no se sature.
+                  const g = GRUPOS.find((x) => x.id === filtro) || GRUPOS[0];
                   const items = gruposVisibles[g.id];
-                  if (!items.length) return null;
-                  const enfocado = filtro === g.id;
                   return (
-                    <div key={g.id} className="bf-grupo">
-                      <button
-                        className="bf-grupo-head"
-                        onClick={() => setFiltro(g.id)}
-                        title={enfocado ? g.sub : "Enfocar este grupo"}
-                      >
+                    <div className="bf-grupo">
+                      <div className="bf-grupo-head" title={g.sub}>
                         <span className="bf-grupo-dot" style={{ background: g.dot }} />
                         <span className="bf-grupo-label">{g.label}</span>
-                        <span className={`bf-grupo-n${enfocado ? " is-active" : ""}`}
-                              style={enfocado && g.id === "sin_atender" ? { background: C.naranja, color: "#fff" } : undefined}>
+                        <span className="bf-grupo-n is-active"
+                              style={g.id === "sin_atender" ? { background: C.naranja, color: "#fff" } : undefined}>
                           {items.length}
                         </span>
                         <span className="bf-grupo-linea" />
-                      </button>
+                      </div>
 
-                      <div className="bf-grupo-body">
-                        {(enfocado ? items : items.slice(0, 4)).map((t) => (
-                          enfocado ? (
+                      {items.length === 0 ? (
+                        <div className="bf-empty">
+                          <p className="bf-empty-title">Nada en «{g.label}»</p>
+                          <p className="bf-empty-text">
+                            {busqueda || areaFiltro ? "Ningún ticket coincide con el filtro." : g.sub}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="bf-grupo-body">
+                          {items.map((t) => (
                             <FilaExpandida
                               key={t.id}
                               ticket={t}
@@ -1475,26 +1479,12 @@ function App() {
                               onAsignar={asignarTicket}
                               onRecordar={enviarMensaje}
                             />
-                          ) : (
-                            <FilaCompacta
-                              key={t.id}
-                              ticket={t}
-                              agentes={agentes}
-                              ahora={ahora}
-                              seleccionado={selectedId === t.id}
-                              onAbrir={() => setSelectedId(t.id)}
-                            />
-                          )
-                        ))}
-                        {!enfocado && items.length > 4 && (
-                          <button className="bf-grupo-mas" onClick={() => setFiltro(g.id)}>
-                            Ver los {items.length - 4} restantes
-                          </button>
-                        )}
-                      </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
-                })
+                })()
               )}
             </div>
           </div>
@@ -1623,30 +1613,6 @@ function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbr
 }
 
 /* Fila de un grupo no enfocado: una línea, solo para no perderlo de vista. */
-function FilaCompacta({ ticket, agentes, ahora, seleccionado, onAbrir }) {
-  const ms = edadMs(ticket, ahora);
-  const agente = agentes[ticket.asignado_a];
-  return (
-    <div className={`bf-fila-min${seleccionado ? " is-selected" : ""}`} onClick={onAbrir}>
-      {agente ? (
-        <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(ticket.asignado_a) }}>
-          {iniciales(agente.nombre)}
-        </span>
-      ) : (
-        <span className="bf-avatar bf-avatar-sm bf-avatar-vacio">?</span>
-      )}
-      <span className="bf-fila-min-id">{ticket.id}</span>
-      {(ticket.maquina || ticket.area) && (
-        <span className="bf-fila-min-maq">{ticket.maquina || ticket.area}</span>
-      )}
-      <span className="bf-fila-min-texto">{ultimoMensaje(ticket)}</span>
-      <span className="bf-fila-min-edad" style={{ color: colorEdad(ms) }}>{textoEdad(ms)}</span>
-    </div>
-  );
-}
-
-
-
 function EstadoBadge({ estado }) {
   const meta = ESTADO_META[estado] || ESTADO_META["OPEN"];
   return (
@@ -3436,7 +3402,7 @@ const CSS = `
 
 .bf-grupo{display:flex;flex-direction:column}
 .bf-grupo-head{
-  display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;
   border:none;background:transparent;padding:0 2px 8px;
 }
 .bf-grupo-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
@@ -3448,12 +3414,6 @@ const CSS = `
 .bf-grupo-n.is-active{background:${C.azulDark};color:#fff}
 .bf-grupo-linea{flex:1;height:1px;background:${C.border}}
 .bf-grupo-body{border:1px solid ${C.border};border-radius:12px;overflow:hidden;background:${C.surface}}
-.bf-grupo-mas{
-  display:block;width:100%;text-align:center;cursor:pointer;border:none;
-  border-top:1px solid ${C.bg};background:${C.surfaceAlt};
-  padding:8px;font-size:11.5px;font-weight:600;color:${C.textMuted};
-}
-.bf-grupo-mas:hover{background:#EEF3F3;color:${C.azulDark}}
 
 /* Fila expandida */
 .bf-fila{display:flex;align-items:stretch;cursor:pointer;border-bottom:1px solid ${C.bg};transition:background .15s}
@@ -3488,18 +3448,7 @@ const CSS = `
 }
 
 /* Fila compacta (grupo no enfocado) */
-.bf-fila-min{
-  display:flex;align-items:center;gap:10px;cursor:pointer;padding:9px 14px;
-  border-bottom:1px solid ${C.bg};transition:background .15s;
-}
-.bf-fila-min:last-child{border-bottom:none}
-.bf-fila-min:hover{background:${C.surfaceAlt}}
-.bf-fila-min.is-selected{background:rgba(208,100,48,0.05)}
 .bf-avatar-vacio{background:${C.bg};border:1px dashed ${C.borderStrong};color:${C.urgentText}}
-.bf-fila-min-id{font-size:12.5px;font-weight:800;color:${C.azulDark};flex-shrink:0}
-.bf-fila-min-maq{font-size:10.5px;font-weight:700;color:${C.textMuted};background:${C.bg};border-radius:5px;padding:2px 7px;flex-shrink:0}
-.bf-fila-min-texto{flex:1;min-width:0;font-size:12.5px;color:${C.textMuted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bf-fila-min-edad{font-size:12px;font-weight:700;flex-shrink:0}
 
 .bf-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:20px;font-size:11.5px;font-weight:700}
 .bf-badge-dot{width:6px;height:6px;border-radius:50%}
