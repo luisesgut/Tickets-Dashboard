@@ -870,12 +870,12 @@ function App() {
     if (autenticado && vista === "config") { fetchConfigAgentes(); fetchConfigUsuarios(); }
   }, [vista, autenticado]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const crearAgente = async (id, nombre, whatsapp, notificar) => {
+  const crearAgente = async (id, nombre, whatsapp, notificar, email) => {
     const t = localStorage.getItem("bf_token");
     const res = await fetch(`${API}/agentes`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
-      body: JSON.stringify({ id, nombre, whatsapp, notificar }),
+      body: JSON.stringify({ id, nombre, whatsapp, notificar, email: email || null }),
     });
     const data = await res.json();
     if (data.ok) await fetchConfigAgentes();
@@ -2555,6 +2555,7 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
   const [nuevoAId, setNuevoAId] = useState("");
   const [nuevoANombre, setNuevoANombre] = useState("");
   const [nuevoAWa, setNuevoAWa] = useState("");
+  const [nuevoAEmail, setNuevoAEmail] = useState("");
   const [nuevoANotif, setNuevoANotif] = useState(true);
   const [errAgente, setErrAgente] = useState("");
   const [editAgenteId, setEditAgenteId] = useState(null);
@@ -2571,9 +2572,9 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
     if (!nuevoAId.trim() || !nuevoANombre.trim() || !nuevoAWa.trim()) {
       setErrAgente("ID, nombre y WhatsApp son requeridos"); return;
     }
-    const res = await onCrearAgente(nuevoAId.trim(), nuevoANombre.trim(), nuevoAWa.trim(), nuevoANotif);
+    const res = await onCrearAgente(nuevoAId.trim(), nuevoANombre.trim(), nuevoAWa.trim(), nuevoANotif, nuevoAEmail.trim());
     if (res && res.ok) {
-      setCreandoAgente(false); setNuevoAId(""); setNuevoANombre(""); setNuevoAWa(""); setNuevoANotif(true); setErrAgente("");
+      setCreandoAgente(false); setNuevoAId(""); setNuevoANombre(""); setNuevoAWa(""); setNuevoAEmail(""); setNuevoANotif(true); setErrAgente("");
     } else {
       setErrAgente(res?.error || "Error al crear agente");
     }
@@ -2593,7 +2594,7 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
 
   const iniciarEditAgente = (id, a) => {
     setEditAgenteId(id);
-    setEditAgenteCampos({ nombre: a.nombre, whatsapp: a.whatsapp, notificar: a.notificar, activo: a.activo });
+    setEditAgenteCampos({ nombre: a.nombre, whatsapp: a.whatsapp, email: a.email || "", notificar: a.notificar, activo: a.activo });
   };
 
   const guardarAgente = async () => {
@@ -2621,6 +2622,8 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
               <input className="bf-guia-input" placeholder="ID (ej: agente_luis)" value={nuevoAId} onChange={e => setNuevoAId(e.target.value)} />
               <input className="bf-guia-input" placeholder="Nombre completo" value={nuevoANombre} onChange={e => setNuevoANombre(e.target.value)} />
               <input className="bf-guia-input" placeholder="WhatsApp (ej: 4771234567)" value={nuevoAWa} onChange={e => setNuevoAWa(e.target.value)} />
+              {/* Los avisos a TI llegan solo por correo (ticket nuevo y asignación). */}
+              <input className="bf-guia-input" type="email" placeholder="Correo (ej: icoronado@bioflex.mx)" value={nuevoAEmail} onChange={e => setNuevoAEmail(e.target.value)} />
               <div className="bf-guia-toggle-row">
                 <label className="bf-assign-label" style={{ margin: 0 }}>Recibe notificaciones</label>
                 <input type="checkbox" checked={nuevoANotif} onChange={e => setNuevoANotif(e.target.checked)} />
@@ -2649,6 +2652,7 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
                   <input className="bf-guia-input" value={editAgenteCampos.nombre} onChange={e => setEditAgenteCampos(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre" />
                   <input className="bf-guia-input" value={editAgenteCampos.whatsapp} onChange={e => setEditAgenteCampos(p => ({ ...p, whatsapp: e.target.value }))} placeholder="WhatsApp" />
+                  <input className="bf-guia-input" type="email" value={editAgenteCampos.email} onChange={e => setEditAgenteCampos(p => ({ ...p, email: e.target.value }))} placeholder="Correo (aquí le llegan los avisos)" />
                   <div className="bf-cfg-toggles">
                     <label className="bf-cfg-toggle">
                       <input type="checkbox" checked={editAgenteCampos.notificar} onChange={e => setEditAgenteCampos(p => ({ ...p, notificar: e.target.checked }))} />
@@ -2677,8 +2681,8 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
                   <div className="bf-cfg-info">
                     <span className="bf-cfg-nombre">{a.nombre}</span>
                     <span className="bf-cfg-sub">
-                      +{a.whatsapp}
-                      {a.notificar && <span className="bf-cfg-pill">notif</span>}
+                      +{a.whatsapp}{a.email && <> · {a.email}</>}
+                      {a.notificar && <span className={`bf-cfg-pill${a.email ? "" : " bf-cfg-pill-off"}`}>{a.email ? "avisos por correo" : "sin correo: no recibe avisos"}</span>}
                       {!a.activo && <span className="bf-cfg-pill bf-cfg-pill-off">inactivo</span>}
                     </span>
                     <span className="bf-cfg-id">{id}</span>

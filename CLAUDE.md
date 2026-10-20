@@ -173,7 +173,7 @@ Consequences to keep in mind when editing:
 | `DetalleTicket` | Right-panel detail view. `key={ticket.id}` resets local state on ticket change. |
 | `GestorGuias` | Guide management view: list panel + editor panel side by side. |
 | `EditorGuia` | Guide step editor: metadata, step list with inline edit, image upload per step. |
-| `GestorConfig` | Configuration view: agents panel + whitelist panel side by side. |
+| `GestorConfig` | Configuration view: agents panel (name, WhatsApp, **email** — IT notices go only to the email; IT gets no WhatsApp) + whitelist panel side by side. |
 | `PortalUsuario` | The end-user app: raise a ticket, follow mine, link WhatsApp. Rendered instead of everything above when `rol === "usuario"`. |
 | `FilaPortal` | One row in "Mis tickets" — folio, user-facing state, channel, age, who's on it. |
 | `DetallePortal` | Ticket detail for the requester: status in plain words, conversation, reply box (hidden on terminal states). |
