@@ -304,23 +304,9 @@ const IcSliders = (p) => (
     }
   />
 );
-const IcBook = (p) => (
-  <Icon
-    {...p}
-    d={
-      <>
-        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-      </>
-    }
-  />
-);
 const IcPlus = (p) => <Icon {...p} d={<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>} />;
 const IcTrash = (p) => (
   <Icon {...p} d={<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></>} />
-);
-const IcImage = (p) => (
-  <Icon {...p} d={<><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>} />
 );
 const IcSend = (p) => (
   <Icon {...p} d={<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>} />
@@ -489,7 +475,7 @@ function App() {
   );
 
   // ── Estado del dashboard ─────────────────────────────────────
-  const [vista, setVista] = useState("tickets"); // "tickets" | "guias"
+  const [vista, setVista] = useState("tickets"); // "tickets" | "config"
   const [tickets, setTickets] = useState({});
   const [agentes, setAgentes] = useState({});
   const [selectedId, setSelectedId] = useState(null);
@@ -513,11 +499,6 @@ function App() {
   const versionRef = useRef(null);         // última firma vista del centinela
   const selectedIdRef = useRef(null);      // selectedId legible desde fetchData
   const imgsCargadasRef = useRef("");      // IDs de fotos ya convertidas a blob
-
-  // ── Estado de guías ──────────────────────────────────────────
-  const [guias, setGuias] = useState([]);
-  const [guiaSelId, setGuiaSelId] = useState(null);
-  const [guiaDetalle, setGuiaDetalle] = useState(null);
 
   // ── Estado de configuración ───────────────────────────────────
   const [configAgentes, setConfigAgentes] = useState({});
@@ -749,102 +730,6 @@ function App() {
     } catch (e) {
       console.error("Error al actualizar ticket", e);
     }
-  };
-
-  // ── Gestión de guías ─────────────────────────────────────────
-  const fetchGuias = async () => {
-    const t = localStorage.getItem("bf_token");
-    try {
-      const res = await fetch(`${API}/guias`, { headers: { Authorization: `Bearer ${t}` } });
-      const data = await res.json();
-      setGuias(data.guias || []);
-    } catch (e) { console.error("Error al cargar guías", e); }
-  };
-
-  const fetchGuiaDetalle = async (id) => {
-    const t = localStorage.getItem("bf_token");
-    try {
-      const res = await fetch(`${API}/guias/${id}`, { headers: { Authorization: `Bearer ${t}` } });
-      setGuiaDetalle(await res.json());
-    } catch (e) { console.error("Error al cargar detalle de guía", e); }
-  };
-
-  useEffect(() => {
-    if (guiaSelId) fetchGuiaDetalle(guiaSelId);
-    else setGuiaDetalle(null);
-  }, [guiaSelId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (autenticado && vista === "guias") fetchGuias();
-  }, [vista, autenticado]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const apiGuia = async (url, opts = {}) => {
-    const t = localStorage.getItem("bf_token");
-    const res = await fetch(`${API}${url}`, {
-      ...opts,
-      headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) },
-    });
-    return res.json();
-  };
-
-  const crearGuia = async (id, titulo, descripcion_ticket) => {
-    const data = await apiGuia("/guias", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, titulo, descripcion_ticket }),
-    });
-    if (data.ok) { await fetchGuias(); setGuiaSelId(id); }
-    return data;
-  };
-
-  const actualizarGuia = async (id, campos) => {
-    await apiGuia(`/guias/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(campos),
-    });
-    await fetchGuias();
-    if (guiaSelId === id) await fetchGuiaDetalle(id);
-  };
-
-  const crearPaso = async (guiaId, texto) => {
-    await apiGuia(`/guias/${guiaId}/pasos`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texto }),
-    });
-    await fetchGuiaDetalle(guiaId);
-  };
-
-  const actualizarPaso = async (guiaId, pasoId, campos) => {
-    await apiGuia(`/guias/${guiaId}/pasos/${pasoId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(campos),
-    });
-    await fetchGuiaDetalle(guiaId);
-  };
-
-  const eliminarPaso = async (guiaId, pasoId) => {
-    await apiGuia(`/guias/${guiaId}/pasos/${pasoId}`, { method: "DELETE" });
-    await fetchGuiaDetalle(guiaId);
-  };
-
-  const subirImagenPaso = async (guiaId, pasoId, file) => {
-    const t = localStorage.getItem("bf_token");
-    const form = new FormData();
-    form.append("file", file);
-    await fetch(`${API}/guias/${guiaId}/pasos/${pasoId}/imagen`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${t}` },
-      body: form,
-    });
-    await fetchGuiaDetalle(guiaId);
-  };
-
-  const eliminarImagenPaso = async (guiaId, pasoId) => {
-    await apiGuia(`/guias/${guiaId}/pasos/${pasoId}/imagen`, { method: "DELETE" });
-    await fetchGuiaDetalle(guiaId);
   };
 
   // ── Gestión de configuración ──────────────────────────────────
@@ -1094,7 +979,6 @@ function App() {
         String(t.id).toLowerCase().includes(q) ||
         String(t.nombre || "").toLowerCase().includes(q) ||
         String(t.solicitante_email || "").toLowerCase().includes(q) ||
-        String(t.maquina || "").toLowerCase().includes(q) ||
         String(t.area || "").toLowerCase().includes(q));
     const out = {};
     Object.entries(cola.porGrupo).forEach(([k, v]) => { out[k] = v.filter(pasa); });
@@ -1328,13 +1212,6 @@ function App() {
 
         <div className="bf-side-links">
           <button
-            className={`bf-side-link${vista === "guias" ? " is-active" : ""}`}
-            onClick={() => setVista("guias")}
-          >
-            <IcBook size={15} /> Guías
-            <span className="bf-side-link-n">{guias.length}</span>
-          </button>
-          <button
             className={`bf-side-link${vista === "config" ? " is-active" : ""}`}
             onClick={() => setVista("config")}
           >
@@ -1357,14 +1234,11 @@ function App() {
         <header className="bf-header">
           <div>
             <h1 className="bf-title">
-              {vista === "guias" ? "Guías de soporte"
-                : vista === "config" ? "Configuración"
+              {vista === "config" ? "Configuración"
                 : (TITULOS[filtro] || "Cola de trabajo")}
             </h1>
             <p className="bf-subtitle">
-              {vista === "guias"
-                ? `${guias.length} ${guias.length === 1 ? "guía" : "guías"} configuradas`
-                : vista === "config"
+              {vista === "config"
                 ? "Agentes de soporte y whitelist de usuarios"
                 : masViejoSinAtender ? (
                     <>
@@ -1385,7 +1259,7 @@ function App() {
               <div className="bf-search">
                 <IcSearch size={16} className="bf-search-ic" />
                 <input
-                  placeholder="Folio, número o máquina…"
+                  placeholder="Folio, nombre o área…"
                   value={busqueda}
                   onChange={(e) => setBusqueda(e.target.value)}
                 />
@@ -1399,21 +1273,7 @@ function App() {
         </header>
 
         {/* Workspace */}
-        {vista === "guias" ? (
-          <GestorGuias
-            guias={guias}
-            guiaSelId={guiaSelId}
-            guiaDetalle={guiaDetalle}
-            onSeleccionar={setGuiaSelId}
-            onCrear={crearGuia}
-            onActualizar={actualizarGuia}
-            onCrearPaso={crearPaso}
-            onActualizarPaso={actualizarPaso}
-            onEliminarPaso={eliminarPaso}
-            onSubirImagen={subirImagenPaso}
-            onEliminarImagen={eliminarImagenPaso}
-          />
-        ) : vista === "config" ? (
+        {vista === "config" ? (
           <GestorConfig
             agentes={configAgentes}
             usuarios={configUsuarios}
@@ -1546,9 +1406,9 @@ function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbr
       <div className="bf-fila-cuerpo">
         <div className="bf-fila-top">
           <span className="bf-fila-id">{ticket.id}</span>
-          {(ticket.maquina || ticket.area) && (
+          {ticket.area && (
             <span className="bf-fila-maq" style={{ color, background: `${color}14` }}>
-              {ticket.maquina || ticket.area}
+              {ticket.area}
             </span>
           )}
           <span style={{ flex: 1 }} />
@@ -1675,7 +1535,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           </button>
         </div>
         <p className="bf-detail-sub">
-          {[ticket.maquina || ticket.area, ticket.nombre, contactoDe(ticket)]
+          {[ticket.area, ticket.nombre, contactoDe(ticket)]
             .filter(Boolean).join(" · ")}
         </p>
       </div>
@@ -1685,10 +1545,6 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
         <div className="bf-meta">
           <span className="bf-meta-k">Área</span>
           <span className="bf-meta-v">{ticket.area || "—"}</span>
-        </div>
-        <div className="bf-meta">
-          <span className="bf-meta-k">Máquina</span>
-          <span className="bf-meta-v">{ticket.maquina || "—"}</span>
         </div>
         <div className="bf-meta">
           <span className="bf-meta-k"><IcPhone size={13} /> Usuario</span>
@@ -1710,7 +1566,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           <span className="bf-meta-k">Canal</span>
           <span className="bf-meta-v" style={{ textTransform: "capitalize" }}>{ticket.canal || "whatsapp"}</span>
         </div>
-        <div className="bf-meta" style={{ gridColumn: "span 2" }}>
+        <div className="bf-meta" style={{ gridColumn: "span 3" }}>
           <span className="bf-meta-k">Prioridad</span>
           <span className="bf-meta-v bf-meta-v-row">
             <select
@@ -2012,509 +1868,6 @@ function WaText({ text }) {
   return <span>{nodes}</span>;
 }
 
-function ModalNuevaGuia({ onCrear, onCerrar }) {
-  const [paso, setPaso] = useState(1); // 1=info básica, 2=descripción problema
-  const [id, setId] = useState("");
-  const [titulo, setTitulo] = useState("");
-  const [desc, setDesc] = useState("");
-  const [err, setErr] = useState("");
-
-  const idSlug = titulo.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "").slice(0, 40);
-
-  const handleSiguiente = () => {
-    if (!titulo.trim()) { setErr("El título es requerido"); return; }
-    if (titulo.length > 24) { setErr("Máximo 24 caracteres"); return; }
-    setErr("");
-    setPaso(2);
-  };
-
-  const handleCrear = async () => {
-    const finalId = id.trim() || idSlug || "guia_nueva";
-    const res = await onCrear(finalId, titulo.trim(), desc.trim());
-    if (res && res.ok) {
-      onCerrar();
-    } else {
-      setErr(res?.error || "Error al crear. ¿El ID ya existe?");
-      setPaso(1);
-    }
-  };
-
-  return (
-    <div className="bf-modal-overlay" onClick={onCerrar}>
-      <div className="bf-modal" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="bf-modal-head">
-          <div>
-            <div className="bf-modal-title">Nueva guía de soporte</div>
-            <div className="bf-modal-sub">Paso {paso} de 2</div>
-          </div>
-          <button className="bf-icon-btn" onClick={onCerrar}><IcX size={16} /></button>
-        </div>
-
-        {/* Barra de progreso */}
-        <div className="bf-modal-progress">
-          <div className="bf-modal-progress-bar" style={{ width: paso === 1 ? "50%" : "100%" }} />
-        </div>
-
-        {paso === 1 ? (
-          <>
-            <div className="bf-modal-body">
-              <div className="bf-guia-field">
-                <label className="bf-assign-label">¿Cuál es el problema que resuelve esta guía?</label>
-                <p className="bf-modal-hint">Este nombre lo verá el bot para clasificar el problema del usuario.</p>
-                <input
-                  className="bf-guia-input"
-                  placeholder="Ej: Pantalla congelada, No imprime nada…"
-                  value={titulo}
-                  maxLength={24}
-                  autoFocus
-                  onChange={e => { setTitulo(e.target.value); setErr(""); }}
-                  onKeyDown={e => e.key === "Enter" && handleSiguiente()}
-                />
-                <div className="bf-modal-charcount">{titulo.length}/24 caracteres</div>
-              </div>
-              <div className="bf-guia-field" style={{ marginTop: 4 }}>
-                <label className="bf-assign-label">ID interno <span style={{ fontWeight: 400, color: "#888" }}>(opcional — se genera automático)</span></label>
-                <input
-                  className="bf-guia-input"
-                  placeholder={idSlug || "guia_ejemplo"}
-                  value={id}
-                  onChange={e => setId(e.target.value.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, ""))}
-                />
-              </div>
-            </div>
-            {err && <p className="bf-guia-err" style={{ padding: "0 24px" }}>{err}</p>}
-            <div className="bf-modal-footer">
-              <button className="bf-guia-cancel-btn" onClick={onCerrar}>Cancelar</button>
-              <button className="bf-guia-save-btn" onClick={handleSiguiente}>Siguiente →</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="bf-modal-body">
-              <div className="bf-modal-summary">
-                <span className="bf-guia-badge-off" style={{ background: "rgba(208,100,48,.1)", color: C.naranja, border: `1px solid ${C.naranja}` }}>{titulo}</span>
-              </div>
-              <div className="bf-guia-field" style={{ marginTop: 16 }}>
-                <label className="bf-assign-label">¿Cómo describe el usuario este problema?</label>
-                <p className="bf-modal-hint">El bot usará esto para crear el ticket automáticamente cuando el usuario pase por la guía. Escríbelo como si fuera la queja del usuario.</p>
-                <textarea
-                  className="bf-guia-input"
-                  placeholder="Ej: Sispro se congela por completo. Se cerró el proceso desde el Administrador de tareas y sigue igual."
-                  value={desc}
-                  rows={4}
-                  autoFocus
-                  onChange={e => setDesc(e.target.value)}
-                />
-              </div>
-              <div className="bf-modal-tip">
-                <span>💡</span>
-                <span>Después podrás agregar los pasos con texto e imágenes desde el editor.</span>
-              </div>
-            </div>
-            {err && <p className="bf-guia-err" style={{ padding: "0 24px" }}>{err}</p>}
-            <div className="bf-modal-footer">
-              <button className="bf-guia-cancel-btn" onClick={() => { setPaso(1); setErr(""); }}>← Atrás</button>
-              <BotonAccion className="bf-guia-save-btn" onClick={handleCrear} cargandoTexto="Creando…">
-                Crear guía
-              </BotonAccion>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function GestorGuias({ guias, guiaSelId, guiaDetalle, onSeleccionar, onCrear, onActualizar, onCrearPaso, onActualizarPaso, onEliminarPaso, onSubirImagen, onEliminarImagen }) {
-  const [modalAbierto, setModalAbierto] = useState(false);
-
-  return (
-    <section className="bf-work">
-      {modalAbierto && (
-        <ModalNuevaGuia
-          onCrear={onCrear}
-          onCerrar={() => setModalAbierto(false)}
-        />
-      )}
-
-      {/* Lista de guías */}
-      <div className="bf-panel bf-list">
-        <div className="bf-panel-head">
-          <IcBook size={16} />
-          <span>Guías ({guias.length})</span>
-          <button className="bf-guia-add-btn" onClick={() => setModalAbierto(true)} title="Nueva guía">
-            <IcPlus size={15} />
-          </button>
-        </div>
-
-        <div className="bf-list-body bf-scroll">
-          {guias.length === 0 ? (
-            <div className="bf-empty">
-              <div className="bf-empty-ic"><IcBook size={28} /></div>
-              <p className="bf-empty-title">Sin guías</p>
-              <p className="bf-empty-text">Crea la primera guía para el bot de WhatsApp.</p>
-              <button className="bf-guia-save-btn" style={{ marginTop: 12 }} onClick={() => setModalAbierto(true)}>
-                <IcPlus size={13} /> Nueva guía
-              </button>
-            </div>
-          ) : (
-            guias.map(g => (
-              <button
-                key={g.id}
-                className={`bf-guia-card${guiaSelId === g.id ? " is-selected" : ""}${!g.activo ? " is-inactive" : ""}`}
-                onClick={() => onSeleccionar(g.id)}
-              >
-                <div className="bf-guia-card-top">
-                  <span className="bf-guia-card-title">{g.titulo}</span>
-                  {!g.activo
-                    ? <span className="bf-guia-badge-off">inactiva</span>
-                    : <span className="bf-guia-badge-on">activa</span>
-                  }
-                </div>
-                <span className="bf-guia-card-id">{g.id}</span>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Editor */}
-      <div className="bf-panel bf-detail">
-        {!guiaSelId ? (
-          <div className="bf-detail-empty">
-            <div className="bf-empty-ic"><IcBook size={34} /></div>
-            <p className="bf-empty-title">Selecciona una guía</p>
-            <p className="bf-empty-text">Elige una guía de la lista para ver y editar sus pasos, o crea una nueva.</p>
-            <button className="bf-guia-save-btn" style={{ marginTop: 16 }} onClick={() => setModalAbierto(true)}>
-              <IcPlus size={13} /> Nueva guía
-            </button>
-          </div>
-        ) : guiaDetalle ? (
-          <EditorGuia
-            key={guiaSelId}
-            guia={guiaDetalle}
-            onActualizar={onActualizar}
-            onCrearPaso={onCrearPaso}
-            onActualizarPaso={onActualizarPaso}
-            onEliminarPaso={onEliminarPaso}
-            onSubirImagen={onSubirImagen}
-            onEliminarImagen={onEliminarImagen}
-          />
-        ) : (
-          <div className="bf-detail-empty">
-            <p className="bf-empty-text">Cargando…</p>
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function EditorGuia({ guia, onActualizar, onCrearPaso, onActualizarPaso, onEliminarPaso, onSubirImagen, onEliminarImagen }) {
-  const [titulo, setTitulo] = useState(guia.titulo || "");
-  const [desc, setDesc] = useState(guia.descripcion_ticket || "");
-  const [activo, setActivo] = useState(guia.activo !== false);
-  const [metaDirty, setMetaDirty] = useState(false);
-
-  // Estado para agregar nuevo paso
-  const [addOpen, setAddOpen] = useState(false);
-  const [nuevoPasoTexto, setNuevoPasoTexto] = useState("");
-  const [nuevoPasoPreview, setNuevoPasoPreview] = useState(null);
-
-  // Estado para editar paso existente
-  const [imgCacheBust, setImgCacheBust] = useState(Date.now());
-  const [editPasoId, setEditPasoId] = useState(null);
-  const [editPasoTexto, setEditPasoTexto] = useState("");
-  // Qué paso está subiendo imagen ahora: así solo gira el botón de ese paso.
-  const [subiendoImgPasoId, setSubiendoImgPasoId] = useState(null);
-
-  const guardarMeta = async () => {
-    await onActualizar(guia.id, { titulo, descripcion_ticket: desc, activo });
-    setMetaDirty(false);
-  };
-
-  const subirImagen = async (pasoId, file) => {
-    if (!file) return;
-    setSubiendoImgPasoId(pasoId);
-    try {
-      await onSubirImagen(guia.id, pasoId, file);
-      setImgCacheBust(Date.now());
-    } catch (e) {
-      console.error("Error al subir imagen", e);
-    } finally {
-      setSubiendoImgPasoId(null);
-    }
-  };
-
-  const iniciarEditPaso = (paso) => { setEditPasoId(paso.id); setEditPasoTexto(paso.texto); };
-
-  const guardarPaso = async () => {
-    await onActualizarPaso(guia.id, editPasoId, { texto: editPasoTexto });
-    setEditPasoId(null);
-  };
-
-  const handleFileNuevoPaso = (file) => {
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    setNuevoPasoPreview(url);
-  };
-
-  const agregarPaso = async () => {
-    if (!nuevoPasoTexto.trim()) return;
-    await onCrearPaso(guia.id, nuevoPasoTexto.trim());
-    setNuevoPasoTexto("");
-    if (nuevoPasoPreview) { URL.revokeObjectURL(nuevoPasoPreview); setNuevoPasoPreview(null); }
-    setAddOpen(false);
-  };
-
-  const [menuPasoId, setMenuPasoId] = useState(null); // ID del paso con menú de eliminar abierto
-
-  const eliminarPaso = async (pasoId) => {
-    await onEliminarPaso(guia.id, pasoId);
-    setMenuPasoId(null);
-  };
-
-  const eliminarImagen = async (pasoId) => {
-    await onEliminarImagen(guia.id, pasoId);
-    setMenuPasoId(null);
-    setImgCacheBust(Date.now());
-  };
-
-  return (
-    <div className="bf-editor-guia bf-scroll">
-      {/* ── Header de la guía ── */}
-      <div className="bf-eg-header">
-        <div className="bf-eg-header-info">
-          <span className="bf-detail-id">{guia.id}</span>
-          <h2 className="bf-eg-titulo">{guia.titulo}</h2>
-          <div className="bf-eg-meta-row">
-            <span className="bf-eg-chip">{guia.pasos?.length ?? 0} {(guia.pasos?.length ?? 0) === 1 ? "paso" : "pasos"}</span>
-            <label className={`bf-eg-toggle${activo ? " is-on" : ""}`}>
-              <input
-                type="checkbox"
-                checked={activo}
-                style={{ display: "none" }}
-                onChange={e => { setActivo(e.target.checked); setMetaDirty(true); }}
-              />
-              <span className="bf-eg-toggle-dot" />
-              <span>{activo ? "Activa en el bot" : "Inactiva"}</span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Sección: información básica ── */}
-      <div className="bf-eg-section">
-        <div className="bf-eg-section-title">Información de la guía</div>
-        <div className="bf-guia-field">
-          <label className="bf-assign-label">Título del problema <span style={{ color: C.textFaint, fontWeight: 400 }}>({titulo.length}/24 caracteres)</span></label>
-          <input
-            className="bf-guia-input"
-            value={titulo}
-            maxLength={24}
-            onChange={e => { setTitulo(e.target.value); setMetaDirty(true); }}
-            placeholder="Nombre corto del problema"
-          />
-        </div>
-        <div className="bf-guia-field" style={{ marginTop: 10 }}>
-          <label className="bf-assign-label">Descripción del problema</label>
-          <p className="bf-modal-hint">El bot usa esto para crear el ticket automáticamente. Escríbelo como si fuera la queja del usuario.</p>
-          <textarea
-            className="bf-guia-input"
-            value={desc}
-            rows={3}
-            onChange={e => { setDesc(e.target.value); setMetaDirty(true); }}
-            placeholder="Ej: Sispro se congela por completo. Se cerró el proceso desde el Administrador de tareas y sigue igual."
-          />
-        </div>
-        {metaDirty && (
-          <BotonAccion className="bf-guia-save-btn" style={{ marginTop: 10 }} onClick={guardarMeta} cargandoTexto="Guardando…">
-            Guardar cambios
-          </BotonAccion>
-        )}
-      </div>
-
-      {/* ── Sección: pasos ── */}
-      <div className="bf-eg-section">
-        <div className="bf-eg-section-title" style={{ marginBottom: 14 }}>
-          Pasos de la guía
-          <span className="bf-eg-chip" style={{ marginLeft: 8 }}>{guia.pasos?.length ?? 0}</span>
-        </div>
-
-        {(!guia.pasos || guia.pasos.length === 0) && (
-          <div className="bf-eg-empty-pasos">
-            <p>Sin pasos todavía.</p>
-            <p style={{ fontSize: 12, color: C.textFaint, marginTop: 4 }}>Agrega el primer paso para que el bot pueda guiar al usuario.</p>
-          </div>
-        )}
-
-        <div className="bf-eg-pasos-list">
-          {guia.pasos?.map((paso, idx) => (
-            <div key={paso.id} className={`bf-eg-paso${editPasoId === paso.id ? " is-editing" : ""}`}>
-              {/* Número */}
-              <div className="bf-eg-paso-num">{idx + 1}</div>
-
-              {/* Contenido */}
-              <div className="bf-eg-paso-content">
-                {editPasoId === paso.id ? (
-                  <div className="bf-eg-paso-edit">
-                    <textarea
-                      className="bf-guia-input"
-                      value={editPasoTexto}
-                      onChange={e => setEditPasoTexto(e.target.value)}
-                      rows={4}
-                      autoFocus
-                      placeholder="Texto del paso (usa *negrita* para énfasis)"
-                    />
-                    <div className="bf-eg-paso-edit-hint">Usa *asteriscos* para <strong>negrita</strong> en WhatsApp</div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      <BotonAccion className="bf-guia-save-btn" onClick={guardarPaso} cargandoTexto="Guardando…">
-                        Guardar texto
-                      </BotonAccion>
-                      <button className="bf-guia-cancel-btn" onClick={() => setEditPasoId(null)}>Cancelar</button>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="bf-eg-paso-texto"><WaText text={paso.texto} /></p>
-                )}
-
-                {/* Imagen */}
-                {editPasoId !== paso.id && (
-                  <div className="bf-eg-paso-img-area">
-                    {paso.tiene_imagen ? (
-                      <div className="bf-eg-img-preview-wrap">
-                        <img
-                          className="bf-eg-img-preview"
-                          src={`${API}/guias/${guia.id}/pasos/${paso.orden}/imagen?t=${imgCacheBust}`}
-                          alt={`Paso ${idx + 1}`}
-                        />
-                        <label className="bf-eg-img-change-btn">
-                          {subiendoImgPasoId === paso.id
-                            ? <><IcSpinner size={12} className="bf-spin" /> Subiendo…</>
-                            : <><IcImage size={12} /> Cambiar imagen</>}
-                          <input type="file" accept="image/*" style={{ display: "none" }}
-                            disabled={subiendoImgPasoId === paso.id}
-                            onChange={e => subirImagen(paso.id, e.target.files[0])} />
-                        </label>
-                      </div>
-                    ) : (
-                      <label className="bf-eg-img-add-btn">
-                        {subiendoImgPasoId === paso.id
-                          ? <><IcSpinner size={14} className="bf-spin" /><span>Subiendo…</span></>
-                          : <><IcImage size={14} /><span>Agregar imagen</span></>}
-                        <input type="file" accept="image/*" style={{ display: "none" }}
-                          disabled={subiendoImgPasoId === paso.id}
-                          onChange={e => subirImagen(paso.id, e.target.files[0])} />
-                      </label>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Acciones */}
-              {editPasoId !== paso.id && (
-                <div className="bf-eg-paso-actions" style={{ position: "relative" }}>
-                  <button className="bf-icon-btn" onClick={() => iniciarEditPaso(paso)} title="Editar texto">
-                    <IcSliders size={14} />
-                  </button>
-                  <button
-                    className="bf-icon-btn bf-icon-btn-danger"
-                    title="Eliminar"
-                    onClick={() => setMenuPasoId(menuPasoId === paso.id ? null : paso.id)}
-                  >
-                    <IcTrash size={14} />
-                  </button>
-                  {menuPasoId === paso.id && (
-                    <div className="bf-eg-delete-menu">
-                      {paso.tiene_imagen && (
-                        <BotonAccion
-                          className="bf-eg-delete-opt"
-                          onClick={() => eliminarImagen(paso.id)}
-                          cargandoTexto="Eliminando…"
-                          confirmar="¿Eliminar solo la imagen de este paso? El texto se conserva."
-                        >
-                          <IcImage size={13} /> Eliminar foto
-                        </BotonAccion>
-                      )}
-                      <BotonAccion
-                        className="bf-eg-delete-opt bf-eg-delete-opt-danger"
-                        onClick={() => eliminarPaso(paso.id)}
-                        cargandoTexto="Eliminando…"
-                        confirmar="¿Eliminar el paso completo (texto + imagen)? No se puede deshacer."
-                      >
-                        <IcTrash size={13} /> Eliminar paso
-                      </BotonAccion>
-                      <button className="bf-eg-delete-opt" style={{ color: "#888" }} onClick={() => setMenuPasoId(null)}>
-                        Cancelar
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* ── Agregar nuevo paso ── */}
-        {addOpen ? (
-          <div className="bf-eg-add-paso-form">
-            <div className="bf-eg-add-paso-title">Nuevo paso {(guia.pasos?.length ?? 0) + 1}</div>
-            <div className="bf-guia-field">
-              <label className="bf-assign-label">Instrucción para el usuario</label>
-              <textarea
-                className="bf-guia-input"
-                placeholder="Ej: Abre el *Administrador de Tareas* presionando Ctrl+Shift+Esc"
-                value={nuevoPasoTexto}
-                onChange={e => setNuevoPasoTexto(e.target.value)}
-                rows={3}
-                autoFocus
-              />
-              <div className="bf-eg-paso-edit-hint">Usa *asteriscos* para <strong>negrita</strong> en WhatsApp</div>
-            </div>
-
-            <div className="bf-guia-field" style={{ marginTop: 8 }}>
-              <label className="bf-assign-label">Imagen de referencia <span style={{ fontWeight: 400, color: C.textFaint }}>(opcional)</span></label>
-              {nuevoPasoPreview ? (
-                <div className="bf-eg-new-img-preview">
-                  <img src={nuevoPasoPreview} alt="preview" className="bf-eg-img-preview" />
-                  <button className="bf-guia-cancel-btn" style={{ marginTop: 6, alignSelf: "flex-start" }}
-                    onClick={() => { URL.revokeObjectURL(nuevoPasoPreview); setNuevoPasoPreview(null); }}>
-                    Quitar imagen
-                  </button>
-                  <p className="bf-modal-hint" style={{ marginTop: 4 }}>La imagen se subirá después de crear el paso.</p>
-                </div>
-              ) : (
-                <label className="bf-eg-dropzone">
-                  <IcImage size={22} />
-                  <span>Seleccionar imagen</span>
-                  <input type="file" accept="image/*" style={{ display: "none" }}
-                    onChange={e => handleFileNuevoPaso(e.target.files[0])} />
-                </label>
-              )}
-            </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <BotonAccion className="bf-guia-save-btn" onClick={agregarPaso}
-                disabled={!nuevoPasoTexto.trim()} cargandoTexto="Agregando…">
-                <IcPlus size={13} /> Agregar paso
-              </BotonAccion>
-              <button className="bf-guia-cancel-btn" onClick={() => {
-                setAddOpen(false); setNuevoPasoTexto("");
-                if (nuevoPasoPreview) { URL.revokeObjectURL(nuevoPasoPreview); setNuevoPasoPreview(null); }
-              }}>Cancelar</button>
-            </div>
-          </div>
-        ) : (
-          <button className="bf-eg-add-paso-btn" onClick={() => setAddOpen(true)}>
-            <IcPlus size={15} /> Agregar paso
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onActualizarAgente, onAgregarUsuario, onDesactivarUsuario }) {
   // ── Agentes ──
   const [creandoAgente, setCreandoAgente] = useState(false);
@@ -2773,7 +2126,6 @@ function PortalUsuario({ perfil, onLogout }) {
   // Formulario
   const [desc, setDesc] = useState("");
   const [categoria, setCategoria] = useState(null);
-  const [activo, setActivo] = useState("");
   // Solo se pregunta cuando el perfil no trae área: el mismo criterio que en
   // WhatsApp, para que ningún ticket llegue a TI sin saber de dónde viene.
   const [areaTicket, setAreaTicket] = useState("");
@@ -2856,13 +2208,12 @@ function PortalUsuario({ perfil, onLogout }) {
         body: JSON.stringify({
           descripcion: desc.trim(),
           categoria: categoria || undefined,
-          activo: activo.trim() || undefined,
           area: areaTicket.trim() || undefined,
         }),
       });
       const data = await r.json();
       if (!r.ok) { setFormError(data.detail || "No se pudo registrar el ticket."); return; }
-      setDesc(""); setCategoria(null); setActivo(""); setAreaTicket("");
+      setDesc(""); setCategoria(null); setAreaTicket("");
       setExito({ id: data.id });
       await cargarTickets();
     } catch {
@@ -3047,18 +2398,6 @@ function PortalUsuario({ perfil, onLogout }) {
                 </div>
               )}
 
-              <div className="bf-pt-field">
-                <label htmlFor="bf-activo">
-                  Equipo o sistema <span className="bf-pt-opt">— opcional</span>
-                </label>
-                <input
-                  id="bf-activo"
-                  className="bf-pt-input"
-                  placeholder="Mi laptop, la impresora del piso 2, SISPRO…"
-                  value={activo}
-                  onChange={(e) => setActivo(e.target.value)}
-                />
-              </div>
 
               {formError && <p className="bf-login-error">{formError}</p>}
 
@@ -3170,7 +2509,6 @@ function DetallePortal({ id, t, cargando, respuesta, setRespuesta, feedback, onE
           <dl className="bf-pt-meta">
             <div><dt>Levantado</dt><dd>{t.fecha}</dd></div>
             <div><dt>Categoría</dt><dd>{t.categoria || "—"}</dd></div>
-            {t.maquina && <div><dt>Equipo</dt><dd>{t.maquina}</dd></div>}
             <div><dt>Canal</dt><dd>{t.canal === "web" ? "Portal" : "WhatsApp"}</dd></div>
             {t.fecha_cierre && <div><dt>Resuelto</dt><dd>{t.fecha_cierre}</dd></div>}
           </dl>
@@ -3638,29 +2976,14 @@ const CSS = `
   border-radius:13px;background:${C.doneBg};color:${C.doneText};font-size:14px;font-weight:700;
 }
 
-/* ── Gestión de Guías ── */
-/* ── Guías: elementos de lista ── */
+/* ── Controles de formulario (Configuración) ── */
 .bf-guia-add-btn{
   margin-left:auto;width:26px;height:26px;border-radius:8px;
   border:1px solid rgba(133,182,196,0.3);background:transparent;color:${C.azulLight};
   cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;
 }
 .bf-guia-add-btn:hover{background:rgba(133,182,196,0.15);color:#fff}
-.bf-guia-card{
-  display:block;width:100%;text-align:left;cursor:pointer;
-  padding:13px 15px;border-radius:12px;border:1px solid ${C.border};
-  background:${C.surface};transition:all .15s ease;
-}
-.bf-guia-card:hover{border-color:${C.borderStrong};background:${C.surfaceAlt}}
-.bf-guia-card.is-selected{border-color:${C.naranja};background:rgba(208,100,48,0.04);box-shadow:0 0 0 1px ${C.naranja} inset}
-.bf-guia-card.is-inactive{opacity:.5}
-.bf-guia-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
-.bf-guia-card-title{font-size:14px;font-weight:700;color:${C.azulDark}}
-.bf-guia-card-id{font-size:11.5px;color:${C.textFaint};font-family:monospace}
-.bf-guia-badge-off{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${C.border};color:${C.textMuted};flex-shrink:0}
-.bf-guia-badge-on{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(72,168,120,0.12);color:${C.doneText};flex-shrink:0}
 
-/* ── Guías: botones comunes ── */
 .bf-guia-err{font-size:12px;color:${C.rojo}}
 .bf-guia-save-btn{
   display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border:none;border-radius:9px;
@@ -3682,158 +3005,6 @@ const CSS = `
   outline:none;transition:border-color .15s,box-shadow .15s;resize:vertical;
 }
 .bf-guia-input:focus{border-color:${C.azulLight};box-shadow:0 0 0 3px rgba(133,182,196,0.18)}
-
-/* ── Modal nueva guía ── */
-.bf-modal-overlay{
-  position:fixed;inset:0;background:rgba(10,25,25,0.55);z-index:500;
-  display:flex;align-items:center;justify-content:center;padding:20px;
-}
-.bf-modal{
-  background:${C.surface};border:1px solid ${C.border};border-radius:20px;
-  width:100%;max-width:480px;box-shadow:0 20px 60px rgba(21,62,62,0.25);overflow:hidden;
-}
-.bf-modal-head{
-  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
-  padding:24px 24px 16px;
-}
-.bf-modal-title{font-size:17px;font-weight:800;color:${C.azulDark}}
-.bf-modal-sub{font-size:12px;color:${C.textMuted};margin-top:2px}
-.bf-modal-progress{height:3px;background:${C.border};margin:0 24px}
-.bf-modal-progress-bar{height:100%;background:${C.naranja};border-radius:2px;transition:width .3s ease}
-.bf-modal-body{padding:20px 24px;display:flex;flex-direction:column;gap:4px}
-.bf-modal-hint{font-size:12px;color:${C.textMuted};line-height:1.5;margin-bottom:4px}
-.bf-modal-charcount{font-size:11px;color:${C.textFaint};text-align:right;margin-top:2px}
-.bf-modal-summary{display:flex;align-items:center;gap:8px}
-.bf-modal-tip{
-  display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:10px;
-  background:rgba(133,182,196,0.08);border:1px solid rgba(133,182,196,0.2);
-  font-size:12.5px;color:${C.textMuted};line-height:1.5;margin-top:8px;
-}
-.bf-modal-footer{
-  display:flex;justify-content:flex-end;gap:8px;
-  padding:16px 24px;border-top:1px solid ${C.border};
-}
-
-/* ── Editor de guía ── */
-.bf-editor-guia{
-  display:flex;flex-direction:column;gap:0;height:100%;overflow-y:auto;padding:0 2px;
-}
-.bf-eg-header{
-  padding:20px 22px 0;
-  border-bottom:1px solid ${C.border};
-  margin-bottom:0;
-}
-.bf-eg-header-info{display:flex;flex-direction:column;gap:4px;padding-bottom:16px}
-.bf-eg-titulo{font-size:18px;font-weight:800;color:${C.azulDark};margin:2px 0 0}
-.bf-eg-meta-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:6px}
-.bf-eg-chip{
-  font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;
-  background:rgba(133,182,196,0.12);color:${C.doneText};
-}
-.bf-eg-toggle{
-  display:inline-flex;align-items:center;gap:8px;cursor:pointer;
-  font-size:12.5px;font-weight:600;color:${C.textMuted};
-  padding:4px 10px 4px 6px;border-radius:20px;border:1px solid ${C.border};
-  background:${C.surfaceAlt};transition:all .15s;user-select:none;
-}
-.bf-eg-toggle.is-on{color:${C.doneText};border-color:rgba(72,168,120,0.35);background:rgba(72,168,120,0.07)}
-.bf-eg-toggle-dot{
-  width:14px;height:14px;border-radius:50%;background:${C.borderStrong};
-  transition:background .15s;flex-shrink:0;
-}
-.bf-eg-toggle.is-on .bf-eg-toggle-dot{background:${C.doneText}}
-
-.bf-eg-section{
-  padding:20px 22px;border-bottom:1px solid ${C.border};
-}
-.bf-eg-section:last-child{border-bottom:none;padding-bottom:32px}
-.bf-eg-section-title{
-  font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;
-  color:${C.textMuted};margin-bottom:14px;display:flex;align-items:center;
-}
-
-/* Pasos */
-.bf-eg-pasos-list{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
-.bf-eg-paso{
-  display:flex;gap:14px;padding:16px;border:1px solid ${C.border};
-  border-radius:14px;background:${C.surface};align-items:flex-start;
-  transition:border-color .15s;
-}
-.bf-eg-paso.is-editing{border-color:${C.azulLight};box-shadow:0 0 0 3px rgba(133,182,196,0.12)}
-.bf-eg-paso-num{
-  width:30px;height:30px;border-radius:50%;background:${C.azulDark};color:#fff;
-  font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;
-  flex-shrink:0;margin-top:1px;
-}
-.bf-eg-paso-content{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
-.bf-eg-paso-texto{
-  font-size:13.5px;color:${C.text};line-height:1.6;white-space:pre-wrap;margin:0;
-}
-.bf-eg-paso-edit{display:flex;flex-direction:column;gap:6px}
-.bf-eg-paso-edit-hint{font-size:11.5px;color:${C.textFaint};margin-top:2px}
-.bf-eg-paso-actions{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
-
-/* Imagen del paso */
-.bf-eg-paso-img-area{display:flex;flex-direction:column;gap:8px}
-.bf-eg-img-preview-wrap{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
-.bf-eg-img-preview{
-  max-width:280px;width:100%;border-radius:10px;border:1px solid ${C.border};
-  object-fit:cover;display:block;
-}
-.bf-eg-img-change-btn{
-  display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:7px;
-  border:1px dashed ${C.borderStrong};background:transparent;color:${C.textMuted};
-  font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit;
-}
-.bf-eg-img-change-btn:hover{border-color:${C.azulLight};color:${C.azulDark}}
-.bf-eg-img-add-btn{
-  display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:10px;
-  border:1.5px dashed ${C.borderStrong};background:${C.surfaceAlt};color:${C.textMuted};
-  font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit;
-  align-self:flex-start;
-}
-.bf-eg-img-add-btn:hover{border-color:${C.azulLight};color:${C.azulDark};background:rgba(133,182,196,0.06)}
-
-/* Agregar paso */
-.bf-eg-empty-pasos{
-  padding:20px;border-radius:12px;border:1.5px dashed ${C.border};
-  background:${C.surfaceAlt};text-align:center;color:${C.textMuted};font-size:13.5px;margin-bottom:14px;
-}
-.bf-eg-add-paso-btn{
-  display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
-  padding:12px;border-radius:12px;border:1.5px dashed ${C.borderStrong};
-  background:transparent;color:${C.textMuted};font-size:13.5px;font-weight:600;
-  cursor:pointer;transition:all .15s;font-family:inherit;
-}
-.bf-eg-add-paso-btn:hover{border-color:${C.azulLight};color:${C.azulDark};background:rgba(133,182,196,0.06)}
-.bf-eg-add-paso-form{
-  padding:18px;border-radius:14px;border:1px solid ${C.azulLight};
-  background:rgba(133,182,196,0.04);display:flex;flex-direction:column;gap:10px;
-}
-.bf-eg-add-paso-title{font-size:13px;font-weight:800;color:${C.azulDark};margin-bottom:2px}
-.bf-eg-dropzone{
-  display:flex;flex-direction:column;align-items:center;gap:8px;
-  padding:20px;border-radius:10px;border:1.5px dashed ${C.borderStrong};
-  background:${C.surfaceAlt};color:${C.textMuted};font-size:13px;font-weight:500;
-  cursor:pointer;transition:all .15s;text-align:center;
-}
-.bf-eg-dropzone:hover{border-color:${C.azulLight};color:${C.azulDark};background:rgba(133,182,196,0.06)}
-.bf-eg-new-img-preview{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
-.bf-eg-delete-menu{
-  position:absolute;right:0;top:calc(100% + 4px);z-index:100;
-  background:${C.surface};border:1px solid ${C.border};border-radius:10px;
-  box-shadow:0 8px 24px rgba(21,62,62,0.15);padding:4px;min-width:150px;
-  display:flex;flex-direction:column;gap:2px;
-}
-.bf-eg-delete-opt{
-  display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:7px;
-  border:none;background:transparent;font-size:13px;font-weight:500;
-  color:${C.text};cursor:pointer;font-family:inherit;width:100%;text-align:left;
-  transition:background .12s;
-}
-.bf-eg-delete-opt:hover{background:${C.surfaceAlt}}
-.bf-eg-delete-opt-danger{color:${C.rojo}}
-.bf-eg-delete-opt-danger:hover{background:${C.urgentBg}}
 .bf-icon-btn-danger:hover{background:${C.urgentBg};color:${C.rojo};border-color:${C.rojo}}
 
 /* ── Configuración ── */

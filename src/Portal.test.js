@@ -171,16 +171,12 @@ test("levantar un ticket manda solo lo que se llenó y confirma con el folio", a
     target: { value: "No puedo entrar al correo, dice contrasena incorrecta" },
   });
   fireEvent.click(screen.getByText("🔑 Accesos"));
-  fireEvent.change(screen.getByLabelText(/Equipo o sistema/), {
-    target: { value: "Mi laptop" },
-  });
   fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
 
   await waitFor(() => expect(creados.length).toBe(1));
   expect(creados[0]).toEqual({
     descripcion: "No puedo entrar al correo, dice contrasena incorrecta",
     categoria: "🔑 Accesos",
-    activo: "Mi laptop",
   });
 
   // La confirmación da el folio, que es lo que el usuario puede citar
@@ -199,7 +195,6 @@ test("sin categoría elegida, el campo no viaja y lo deduce el backend", async (
 
   await waitFor(() => expect(creados.length).toBe(1));
   expect(creados[0].categoria).toBeUndefined();
-  expect(creados[0].activo).toBeUndefined();
 });
 
 test("el detalle muestra la conversación y deja responder a TI", async () => {

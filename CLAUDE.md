@@ -108,9 +108,8 @@ own panel while the request is still in flight.
 or the spinner disappears immediately. For the same reason every handler in App awaits its
 refetch (`await fetchData()`), so the spinner covers the refresh too, not just the mutation.
 
-Exceptions that manage their own indicator: the header's Sincronizar button (`syncing` +
-`bf-spin`) and per-step image uploads in EditorGuia (`subiendoImgPasoId`, so only the step
-being uploaded spins).
+Exception that manages its own indicator: the header's Sincronizar button (`syncing` +
+`bf-spin`).
 
 ### Casos activos: the queue model
 
@@ -125,7 +124,7 @@ The tickets view is a **work queue grouped by urgency**, not a chronological lis
 | `resueltos` | terminal state |
 
 `filtro` holds the **selected** group (default `sin_atender`), picked in the sidebar. The
-list renders **only that group** with `<FilaExpandida>` (age, machine, inline
+list renders **only that group** with `<FilaExpandida>` (age, area, inline
 Tomar/Asignar/Recordar) — the other groups don't peek in, so the queue doesn't get crowded
 (Luis's call). An empty group shows "Nada en «…»" even when other groups have tickets.
 
@@ -135,8 +134,8 @@ were local. `colorEdad` ramps amber → orange → red at 1 h and 4 h. A 30-seco
 tick keeps the ages moving without any network call.
 
 The **sidebar is a filter rail, not navigation**: the four groups with counts, area chips
-built from active tickets (`areaFiltro`), and per-agent load bars. Guías/Configuración
-moved to a secondary footer block. There are no KPI cards — the counts live in the rail,
+built from active tickets (`areaFiltro`), and per-agent load bars. Configuración
+lives in a secondary footer block. (The Guías view was removed from the dashboard.) There are no KPI cards — the counts live in the rail,
 and `GET /stats` is no longer fetched on sync.
 
 **"Tomar yo"** appears only when `localStorage.bf_nombre` matches an agent's `nombre`
@@ -171,8 +170,6 @@ Consequences to keep in mind when editing:
 | `App` | Root. All state, all fetching, polling every 10s. |
 | `EstadoBadge` | Status pill — looks up `ESTADO_META` dynamically. |
 | `DetalleTicket` | Right-panel detail view. `key={ticket.id}` resets local state on ticket change. |
-| `GestorGuias` | Guide management view: list panel + editor panel side by side. |
-| `EditorGuia` | Guide step editor: metadata, step list with inline edit, image upload per step. |
 | `GestorConfig` | Configuration view: agents panel (name, WhatsApp, **email** — IT notices go only to the email; IT gets no WhatsApp) + whitelist panel side by side. |
 | `PortalUsuario` | The end-user app: raise a ticket, follow mine, link WhatsApp. Rendered instead of everything above when `rol === "usuario"`. |
 | `FilaPortal` | One row in "Mis tickets" — folio, user-facing state, channel, age, who's on it. |
@@ -198,12 +195,7 @@ Consequences to keep in mind when editing:
 - `syncing` — true during active fetch
 
 #### Navigation
-- `vista` — `"tickets" | "guias" | "config"` — determines which workspace to render
-
-#### Guides
-- `guias` — `[{id, titulo, activo}]` list; loaded when `vista === "guias"`
-- `guiaSelId` — selected guide ID
-- `guiaDetalle` — full guide `{id, titulo, descripcion_ticket, activo, pasos: [{id, orden, texto, tiene_imagen}]}`
+- `vista` — `"tickets" | "config"` — determines which workspace to render
 
 #### Configuration
 - `configAgentes` — `{[id]: {nombre, whatsapp, notificar, activo}}` from `/agentes?todos=true`
@@ -233,8 +225,6 @@ Consequences to keep in mind when editing:
 | `fetchData()` | Polls `/tickets`, `/stats`, `/agentes`; detects new OPEN tickets for browser notifications |
 | `fetchAuditLog(ticketId)` | Fetches `/tickets/{id}/eventos` |
 | `fetchTicketImagenes(ticketId)` | Fetches `/tickets/{id}` for imagenes list, then fetches each `/imagenes/{id}` as blob URL |
-| `fetchGuias()` | Fetches `/guias` |
-| `fetchGuiaDetalle(id)` | Fetches `/guias/{id}` |
 | `fetchConfigAgentes()` | Fetches `/agentes?todos=true` |
 | `fetchConfigUsuarios()` | Fetches `/usuarios` |
 | `transicionarTicket(ticketId, nuevoEstado)` | `POST /tickets/{id}/transicion` |
@@ -242,9 +232,6 @@ Consequences to keep in mind when editing:
 | `asignarTicket(ticketId, agenteId)` | `PUT /tickets/{id}/asignar` |
 | `cerrarTicket(id)` | `PUT /tickets/{id}/cerrar` |
 | `enviarMensaje(ticketId, texto, actor)` | `POST /tickets/{id}/mensaje` |
-| `crearGuia / actualizarGuia` | `POST/PUT /guias` |
-| `crearPaso / actualizarPaso / eliminarPaso` | `POST/PUT/DELETE /guias/{id}/pasos` |
-| `subirImagenPaso(guiaId, pasoId, file)` | `POST /guias/{id}/pasos/{paso_id}/imagen` (multipart) |
 | `crearAgente / actualizarAgente` | `POST/PATCH /agentes` |
 | `agregarUsuario / desactivarUsuario` | `POST/DELETE /usuarios` |
 
@@ -268,7 +255,7 @@ Base URL: `REACT_APP_API_URL` env var.
 | DELETE | `/mi/vinculacion` | Portal: unlink |
 | GET | `/mi/tickets` | Portal: my tickets, both channels, with `asignado_nombre` |
 | GET | `/mi/tickets/:id` | Portal: one of mine (404 if it isn't) |
-| POST | `/mi/tickets` | Portal: `{descripcion, categoria?, activo?}` |
+| POST | `/mi/tickets` | Portal: `{descripcion, categoria?, area?}` (the dashboard no longer captures or shows the machine) |
 | POST | `/mi/tickets/:id/mensaje` | Portal: reply to IT |
 | GET | `/personas` | Admin only: list accounts |
 | PATCH | `/personas/:email` | Admin only: `nombre`, `rol`, `area` |
@@ -288,15 +275,6 @@ Base URL: `REACT_APP_API_URL` env var.
 | GET | `/usuarios` | `{usuarios, whitelist_activa}` |
 | POST | `/usuarios` | `{numero, nombre, area?}` |
 | DELETE | `/usuarios/:numero` | Soft-delete |
-| GET | `/guias` | All guides (active + inactive) |
-| POST | `/guias` | `{id, titulo, descripcion_ticket?}` |
-| GET | `/guias/:id` | Guide + steps |
-| PUT | `/guias/:id` | `titulo`, `descripcion_ticket`, `activo` |
-| POST | `/guias/:id/pasos` | `{texto}` |
-| PUT | `/guias/:id/pasos/:paso_id` | `{texto}` |
-| DELETE | `/guias/:id/pasos/:paso_id` | Renumbers steps |
-| POST | `/guias/:id/pasos/:paso_id/imagen` | Multipart file upload |
-| GET | `/guias/:id/pasos/:orden/imagen` | **Public** — no auth (WhatsApp fetches directly) |
 
 ### Ticket data shape
 
