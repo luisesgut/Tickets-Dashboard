@@ -44,28 +44,40 @@ login → GET /auth/yo → perfil.es_ti ?  dashboard de TI (the work queue)
 ### Login and the forced password change
 
 People sign in with their **username** from the previous help desk (`usuarioInput` →
-`POST /auth/login {usuario, password}`); the email field only appears when creating an
-account. If `perfil.debe_cambiar_password` is true (imported accounts — their old passwords
-were stored in plain text), `<CambiarPassword>` replaces the whole app until
-`POST /mi/password` succeeds. Tests: `Login.test.js`.
+`POST /auth/login {usuario, password}`). The screen (`bf-lg-*`, shared by IT and users)
+says so up front, and has a show-password toggle (`verPassword`). **There is no "create
+account" in the UI** (Luis, 2026-10-26): accounts come from the old catalog, and whoever
+didn't have one asks IT ("¿No tenías cuenta…? Contáctanos"). `POST /auth/registro` still
+exists in the backend. If `perfil.debe_cambiar_password` is true, `<CambiarPassword>`
+replaces the whole app until `POST /mi/password` succeeds. Tests: `Login.test.js`.
 
 ### PortalUsuario — what an administrative user sees
 
-One screen, two columns: raise a ticket on the left, "Mis tickets" on the right (the
-detail replaces the list in place — no modal). Above both, in priority order: the
-`WAITING_FOR_USER` alert, then the WhatsApp linking invitation.
+**Mobile first, one screen at a time** (`vista`), designed as "propuesta C" in the
+"Portal de tickets móvil" canvas. On a computer it's the same 560 px column, centered.
+
+```
+tema (home: "¿Qué está fallando?")  → detalles (paso 2) → enviado → vincular
+   └ "Mis tickets" → mis (Abiertos / Resueltos) → detalle
+```
 
 | Piece | Why it's there |
 |---|---|
+| `TEMAS_PORTAL` | The 6 tiles of step 1, in people's words ("Mi equipo", not "Hardware"). Each maps to a backend category (`CATEGORIAS_PORTAL`); "No sé / otro" sends none and the backend infers it. A category the backend no longer lists is dropped, not sent. Each tema carries quick `sugerencias` (tap = written into the text) and an `ayuda` prompt |
+| One required field | The old system was a single input. Step 1 is one tap (and "No sé" is always there); only `descripcion` (≥ 10 chars) is required. The area is asked only when the profile has none |
 | `ESTADO_USUARIO` | Translates machine states into the user's language. `WAITING_FOR_USER` reads "Te preguntaron"; the raw state is **never** shown. Each entry carries `sigue` — whose court the ball is in |
-| `asignado_nombre` | The technician's name, not their id. "Carlos Méndez lo está atendiendo" is the single piece of information that prevents most "¿cómo va mi ticket?" interruptions |
-| One required field | The old system was a single input. The temptation when modernizing is eight mandatory fields; people read that as a downgrade and go back to phoning IT. Only `descripcion` is required — the category is inferred, the area comes from the profile |
-| Folio on success | A big `BFX-0301` the user can quote. The old system gave them nothing to refer to |
-| Linking invitation | Framed as "useful when you *can't* use this page" — that's what makes WhatsApp worth keeping for staff who all have computers |
+| `Avance` | 4-step bar (Recibido → Asignado → En proceso → Resuelto) from `avanceDe(estado)`; `WAITING_FOR_USER` counts as "En proceso" |
+| `asignado_nombre` | The technician's name, not their id. "Carlos Méndez lo está atendiendo" prevents most "¿cómo va mi ticket?" interruptions |
+| Waiting first | In "Mis tickets" and as the home's bottom banner, a `WAITING_FOR_USER` ticket comes first ("Carlos necesita tu respuesta para seguir →") |
+| Folio on success | A big `BFX-0301` the user can quote |
+| Linking, after sending | The WhatsApp invitation is no longer a banner on every visit: it's asked on the "enviado" screen (the moment they want to hear back) and as a small card in "Mis tickets". Copy promises only what the backend does: the *resolved* notice + buttons reach WhatsApp; assignment goes by email when there is one |
+| `vincular` screen | Requests the code on entry, counts down `expira_minutos`, and polls `/mi/perfil` every 4 s (and on `visibilitychange`, i.e. coming back from WhatsApp) so it flips to "Tu WhatsApp quedó ligado" by itself. Fallback: `numero_bot` formatted by `numeroLegible` |
 | 20s refresh | One person's tickets, not the whole queue, so no sentinel needed. Pauses on `document.hidden` like the IT dashboard |
 
-Portal styles are the `bf-pt-*` block at the end of the `CSS` string, built from the same
-`C` palette.
+Portal styles are the `bf-pt-*` block at the end of the `CSS` string. Its primary orange
+is **#B9531F**, not `C.naranja`: white on #D06430 is 3.8:1 and fails WCAG AA; #B9531F is
+4.9:1. Muted text is #566F6D (passes on both white and `C.bg`). Inputs are 16 px so iOS
+Safari doesn't zoom on focus.
 
 ### Role-aware test mocks
 
@@ -190,9 +202,10 @@ Consequences to keep in mind when editing:
 | `DetalleTicket` | Right-panel detail view. `key={ticket.id}` resets local state on ticket change. |
 | `GestorConfig` | Configuration view: agents panel (name, WhatsApp, email, and two independent toggles **Avisos por correo / Avisos por WhatsApp** — each covers new-ticket and assignment notices) + whitelist panel side by side. |
 | `AvisosAgente` | The per-channel pills on an agent row. A channel that's on but has no address/number shows as off-colored ("correo: falta el correo"), because nothing actually reaches them. |
-| `PortalUsuario` | The end-user app: raise a ticket, follow mine, link WhatsApp. Rendered instead of everything above when `rol === "usuario"`. |
-| `FilaPortal` | One row in "Mis tickets" — folio, user-facing state, channel, age, who's on it. |
-| `DetallePortal` | Ticket detail for the requester: status in plain words, conversation, reply box (hidden on terminal states). |
+| `PortalUsuario` | The end-user app, one screen at a time (`vista`): pick a tema, describe, folio, link WhatsApp, Mis tickets, detail. Rendered instead of everything above when `rol === "usuario"`. |
+| `Avance` | The 4-step progress bar of a ticket, for the user. |
+| `FilaPortal` | One card in "Mis tickets" — folio, user-facing state, age, progress, who's on it (or that they're waiting for your answer), channel. |
+| `DetallePortal` | Ticket detail for the requester: status in plain words, progress, conversation, reply box (hidden on terminal states). |
 
 ### App State
 
@@ -200,7 +213,6 @@ Consequences to keep in mind when editing:
 - `token` / `autenticado` / `loginChecking` — auth flow; token stored in `localStorage` as `bf_token`
 - `perfil` — `{email, nombre, rol, area, whatsapp, es_ti}` or null; decides which app renders
 - `esTI` — derived from `perfil.es_ti`; gates polling and notifications
-- `areaInput` — area field on the registration form; lands in the profile and from there on every ticket
 
 #### Tickets
 - `tickets` — `{[id]: ticket}` object; updated by 10s polling

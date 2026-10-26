@@ -296,6 +296,24 @@ const IcX = (p) => (
     }
   />
 );
+const IcInfo = (p) => (
+  <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></>} />
+);
+const IcOjo = (p) => (
+  <Icon {...p} d={<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>} />
+);
+const IcOjoNo = (p) => (
+  <Icon {...p} d={<><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>} />
+);
+const IcAtras = (p) => <Icon {...p} d={<polyline points="15 18 9 12 15 6"/>} />;
+const IcSigue = (p) => <Icon {...p} d={<polyline points="9 18 15 12 9 6"/>} />;
+const IcCheck = (p) => <Icon {...p} d={<polyline points="20 6 9 17 4 12"/>} />;
+const IcCelular = (p) => (
+  <Icon {...p} d={<><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></>} />
+);
+const IcWhatsApp = (p) => (
+  <Icon {...p} d={<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>} />
+);
 const IcMenu = (p) => (
   <Icon {...p} d={<><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></>} />
 );
@@ -457,14 +475,12 @@ function CambiarPassword({ perfil, onListo, onLogout }) {
 function App() {
   // ── Autenticación ────────────────────────────────────────────
   const [autenticado, setAutenticado] = useState(false);
-  // Se entra con el usuario de la mesa de ayuda anterior ("jperez"); el correo
-  // solo se pide para crear una cuenta nueva.
+  // Se entra con el usuario de la mesa de ayuda anterior ("jperez"). Las
+  // cuentas vienen de ese catálogo: quien no tenía una se la pide a TI, así que
+  // la pantalla ya no ofrece crearla (POST /auth/registro sigue en el backend).
   const [usuarioInput, setUsuarioInput] = useState("");
-  const [emailInput, setEmailInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
-  const [nombreInput, setNombreInput] = useState("");
-  const [modoRegistro, setModoRegistro] = useState(false);
-  const [areaInput, setAreaInput] = useState("");
+  const [verPassword, setVerPassword] = useState(false);
   const [loginError, setLoginError] = useState("");
   // Quién entró y qué puede ver. Lo llena /auth/yo al arrancar o el login.
   const [perfil, setPerfil] = useState(null);
@@ -517,7 +533,7 @@ function App() {
     ? { ...tickets[selectedId], historial: detalleListo ? ticketDetalle.historial : null }
     : null;
 
-  // ── Login / Registro ─────────────────────────────────────────
+  // ── Login ────────────────────────────────────────────────────
   // `perfil` decide qué aplicación es esta: con rol de TI se pinta la cola de
   // trabajo; con rol "usuario", el portal para levantar tickets. Es la misma
   // build en los dos casos.
@@ -559,36 +575,6 @@ function App() {
     }
   };
 
-  const registro = async () => {
-    const usuario = usuarioInput.trim().toLowerCase();
-    const email = emailInput.trim().toLowerCase();
-    const password = passwordInput;
-    const nombre = nombreInput.trim();
-    if (!usuario || !email || !password || !nombre) {
-      setLoginError("Completa todos los campos.");
-      return;
-    }
-    if (password.length < 6) {
-      setLoginError("La contraseña debe tener al menos 6 caracteres.");
-      return;
-    }
-    try {
-      const res = await fetch(`${API}/auth/registro`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usuario, email, password, nombre, area: areaInput.trim() || null }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        _guardarSesion(data.token, data);
-      } else {
-        setLoginError(data.detail || "Error al registrar.");
-      }
-    } catch {
-      setLoginError("No se pudo conectar con el servidor.");
-    }
-  };
-
   const logout = () => {
     localStorage.removeItem("bf_token");
     localStorage.removeItem("bf_nombre");
@@ -596,6 +582,7 @@ function App() {
     // y la contraseña del anterior ya escritos en el formulario.
     setUsuarioInput("");
     setPasswordInput("");
+    setVerPassword(false);
     setLoginError("");
     setAutenticado(false);
     setPerfil(null);
@@ -1013,84 +1000,71 @@ function App() {
     );
   }
 
-  /* ── Pantalla: login / registro ──────────────────────────────── */
+  /* ── Pantalla: login ─────────────────────────────────────────── */
+  // La misma para TI y para usuarios: el rol decide qué app sigue.
   if (!autenticado) {
-    const submitAuth = modoRegistro ? registro : login;
+    const alEnter = (e) => e.key === "Enter" && login();
     return (
-      <div className="bf-app bf-login-wrap">
+      <div className="bf-lg">
         <style>{CSS}</style>
-        <div className="bf-login-card">
-          <div className="bf-logo-box">b</div>
-          <h1 className="bf-login-title">bioflex</h1>
-          <p className="bf-login-sub">
-            {modoRegistro
-              ? "Crear cuenta nueva"
-              : "Mesa de Soporte TI"}
-          </p>
-          <input
-            type="text"
-            className="bf-login-input"
-            placeholder="Usuario"
-            autoCapitalize="none"
-            autoComplete="username"
-            value={usuarioInput}
-            onChange={(e) => setUsuarioInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitAuth()}
-            autoFocus={!modoRegistro}
-          />
-          {modoRegistro && (
-            <>
+        <div className="bf-lg-card">
+          <div className="bf-lg-head">
+            <div className="bf-lg-logo">b</div>
+            <h1 className="bf-lg-titulo">Mesa de Ayuda</h1>
+          </div>
+          <div className="bf-lg-cuerpo">
+            <div className="bf-lg-aviso">
+              <IcInfo size={20} />
+              <span>Usa el <strong>mismo usuario y contraseña</strong> de la mesa de ayuda anterior.</span>
+            </div>
+            <div className="bf-lg-campo">
+              <label htmlFor="bf-usuario">Usuario</label>
               <input
-                type="email"
-                className="bf-login-input"
-                placeholder="Correo de la empresa"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submitAuth()}
+                id="bf-usuario"
+                className="bf-lg-input"
+                placeholder="Ej. jperez"
+                autoCapitalize="none"
+                autoComplete="username"
+                value={usuarioInput}
+                onChange={(e) => setUsuarioInput(e.target.value)}
+                onKeyDown={alEnter}
+                autoFocus
               />
-              <input
-                type="text"
-                className="bf-login-input"
-                placeholder="Nombre completo"
-                value={nombreInput}
-                onChange={(e) => setNombreInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submitAuth()}
-              />
-              {/* Se guarda en el perfil y se copia a cada ticket, para no
-                  preguntar "¿dónde estás?" cada vez. */}
-              <input
-                type="text"
-                className="bf-login-input"
-                placeholder="Tu área (Contabilidad, RH, Compras…)"
-                value={areaInput}
-                onChange={(e) => setAreaInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submitAuth()}
-              />
-            </>
-          )}
-          <input
-            type="password"
-            className="bf-login-input"
-            placeholder="Contraseña"
-            value={passwordInput}
-            onChange={(e) => setPasswordInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitAuth()}
-          />
-          {loginError && <p className="bf-login-error">{loginError}</p>}
-          <BotonAccion
-            className="bf-resolve"
-            style={{ width: "100%", marginTop: 4 }}
-            onClick={submitAuth}
-            cargandoTexto={modoRegistro ? "Creando cuenta…" : "Entrando…"}
-          >
-            {modoRegistro ? "Crear cuenta" : "Entrar"}
-          </BotonAccion>
-          <button
-            style={{ background: "none", border: "none", color: "#607d8b", fontSize: 12, marginTop: 12, cursor: "pointer", textDecoration: "underline" }}
-            onClick={() => { setModoRegistro(m => !m); setLoginError(""); }}
-          >
-            {modoRegistro ? "¿Ya tienes cuenta? Inicia sesión" : "¿Primera vez? Crear cuenta"}
-          </button>
+            </div>
+            <div className="bf-lg-campo">
+              <label htmlFor="bf-password">Contraseña</label>
+              <div className="bf-lg-pass">
+                <input
+                  id="bf-password"
+                  type={verPassword ? "text" : "password"}
+                  className="bf-lg-input"
+                  autoComplete="current-password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  onKeyDown={alEnter}
+                />
+                <button
+                  type="button"
+                  className="bf-lg-ojo"
+                  aria-label={verPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  onClick={() => setVerPassword((v) => !v)}
+                >
+                  {verPassword ? <IcOjoNo size={20} /> : <IcOjo size={20} />}
+                </button>
+              </div>
+            </div>
+            {loginError && <p className="bf-login-error">{loginError}</p>}
+            <BotonAccion className="bf-lg-entrar" onClick={login} cargandoTexto="Entrando…">
+              Entrar
+            </BotonAccion>
+            <p className="bf-lg-ayuda">
+              ¿No recuerdas tu usuario o contraseña?<br />
+              <strong>Pídelo a TI.</strong>
+            </p>
+            <div className="bf-lg-pie">
+              ¿No tenías cuenta en la mesa anterior? <strong>Contáctanos</strong>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -2174,18 +2148,99 @@ const ESTADO_USUARIO = {
 };
 const metaUsuario = (e) => ESTADO_USUARIO[e] || { label: e || "—", tono: "espera", sigue: "" };
 
+// Los temas del paso 1. `categoria` es la del backend (CATEGORIAS_PORTAL);
+// la etiqueta es como habla la gente ("Mi equipo", no "Hardware"). "No sé"
+// no manda categoría y el backend la deduce del texto, como siempre.
+const TEMAS_PORTAL = [
+  { id: "accesos", categoria: "🔑 Accesos", label: "Accesos",
+    hint: "Contraseñas, cuentas bloqueadas, permisos",
+    sugerencias: ["Olvidé mi contraseña", "Mi cuenta está bloqueada", "Necesito acceso a una carpeta"],
+    ayuda: "¿En qué sistema? ¿Qué mensaje te sale?",
+    icono: <><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></> },
+  { id: "red", categoria: "🌐 Red", label: "Red",
+    hint: "Sin internet, Wi‑Fi lento, VPN",
+    sugerencias: ["No tengo internet", "El Wi‑Fi está muy lento", "No conecta la VPN"],
+    ayuda: "¿Desde cuándo? ¿Le pasa a alguien más cerca de ti?",
+    icono: <><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></> },
+  { id: "impresora", categoria: "🖨️ Impresora", label: "Impresora",
+    hint: "No imprime, atasca, sale rayado",
+    sugerencias: ["No imprime", "Se atasca el papel", "Sale rayado o manchado"],
+    ayuda: "¿Cuál impresora? ¿En qué piso o área está?",
+    icono: <><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></> },
+  { id: "equipo", categoria: "💻 Hardware", label: "Mi equipo",
+    hint: "No prende, está lento, pantalla, teclado",
+    sugerencias: ["No prende", "Está muy lento", "Falla el teclado o el mouse"],
+    ayuda: "¿Qué hace o qué deja de hacer? ¿Desde cuándo?",
+    icono: <><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></> },
+  { id: "programas", categoria: "⚙️ Software", label: "Programas",
+    hint: "SISPRO, Excel, Outlook, instalar algo",
+    sugerencias: ["SISPRO no abre", "Outlook no recibe correos", "Necesito instalar un programa"],
+    ayuda: "¿Qué programa? ¿Qué mensaje te sale?",
+    icono: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="m8 13 2 2-2 2"/><line x1="13" y1="17" x2="16" y2="17"/></> },
+  { id: "otro", categoria: null, label: "No sé / otro",
+    hint: "Solo cuéntanos qué pasa",
+    sugerencias: [],
+    ayuda: "Mientras más detalle, menos preguntas de regreso.",
+    icono: <><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></> },
+];
+const TEMA_OTRO = TEMAS_PORTAL[TEMAS_PORTAL.length - 1];
+
+// Los 4 pasos que ve el usuario. WAITING_FOR_USER cuenta como "en proceso":
+// TI ya está en ello, solo espera su respuesta.
+const PASOS_AVANCE = ["Recibido", "Asignado", "En proceso", "Resuelto"];
+const avanceDe = (estado) => ({
+  OPEN: 1, abierto: 1, ASSIGNED: 2, REOPENED: 2,
+  IN_PROGRESS: 3, WAITING_FOR_USER: 3, RESOLVED: 4, CLOSED: 4, cerrado: 4,
+}[estado] || 1);
+
+function Avance({ estado, etiquetas = false }) {
+  const n = avanceDe(estado);
+  return (
+    <ol className={`bf-pt-avance${etiquetas ? " con-etiquetas" : ""}`} aria-label={`Avance: ${PASOS_AVANCE[n - 1]}`}>
+      {PASOS_AVANCE.map((p, i) => (
+        <li key={p} className={i < n ? "hecho" : ""} aria-current={i === n - 1 ? "step" : undefined}>
+          <span className="bf-pt-avance-barra" />
+          {etiquetas && <span className="bf-pt-avance-txt">{p}</span>}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+const haceCuanto = (ms) => {
+  const t = textoEdad(ms);
+  return t === "ahora" || t === "—" ? t : `hace ${t}`;
+};
+
+// "524771234567" → "+52 477 123 4567"; cualquier otro formato, tal cual con "+".
+const numeroLegible = (n) => {
+  const d = String(n || "").replace(/\D/g, "");
+  return d.length === 12 && d.startsWith("52")
+    ? `+52 ${d.slice(2, 5)} ${d.slice(5, 8)} ${d.slice(8)}`
+    : d ? `+${d}` : "";
+};
+
+const mmss = (ms) => {
+  const s = Math.ceil(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
 function PortalUsuario({ perfil, onLogout }) {
   const [miPerfil, setMiPerfil] = useState(null);
   const [misTickets, setMisTickets] = useState([]);
   const [cargando, setCargando] = useState(true);
+  // Una pantalla a la vez, como una app de celular:
+  // "tema" → "detalles" → "enviado" → "vincular", más "mis" y "detalle".
+  const [vista, setVista] = useState("tema");
+  const [pestana, setPestana] = useState("abiertos");
   const [selId, setSelId] = useState(null);
   const [detalle, setDetalle] = useState(null);
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
   const [ahora, setAhora] = useState(Date.now());
 
   // Formulario
+  const [tema, setTema] = useState(null);
   const [desc, setDesc] = useState("");
-  const [categoria, setCategoria] = useState(null);
   // Solo se pregunta cuando el perfil no trae área: el mismo criterio que en
   // WhatsApp, para que ningún ticket llegue a TI sin saber de dónde viene.
   const [areaTicket, setAreaTicket] = useState("");
@@ -2193,8 +2248,9 @@ function PortalUsuario({ perfil, onLogout }) {
   const [exito, setExito] = useState(null);     // {id} del ticket recién creado
 
   // Vinculación de WhatsApp
-  const [vinc, setVinc] = useState(null);       // {codigo, wa_link, mensaje, expira_minutos}
-  const [vincCerrado, setVincCerrado] = useState(false);
+  const [vinc, setVinc] = useState(null);       // respuesta de /mi/vinculacion + `vence` (ms)
+  const [vincError, setVincError] = useState("");
+  const [reloj, setReloj] = useState(Date.now()); // late cada segundo solo en "vincular"
 
   // Respuesta en el detalle
   const [respuesta, setRespuesta] = useState("");
@@ -2202,6 +2258,9 @@ function PortalUsuario({ perfil, onLogout }) {
 
   const tok = () => localStorage.getItem("bf_token");
   const headers = () => ({ Authorization: `Bearer ${tok()}` });
+
+  const ir = (v) => { setVista(v); window.scrollTo(0, 0); };
+  const abrirTicket = (id) => { setSelId(id); setRespuesta(""); ir("detalle"); };
 
   const cargarPerfil = async () => {
     try {
@@ -2234,13 +2293,14 @@ function PortalUsuario({ perfil, onLogout }) {
 
   // Refresco ligero: son los tickets de una sola persona, no la cola completa.
   // Se pausa con la pestaña oculta, igual que el dashboard de TI.
+  const enDetalle = vista === "detalle" && selId;
   useEffect(() => {
-    const tick = () => { if (!document.hidden) { cargarTickets(); if (selId) cargarDetalle(selId); } };
+    const tick = () => { if (!document.hidden) { cargarTickets(); if (enDetalle) cargarDetalle(selId); } };
     const i = setInterval(tick, 20000);
     const alVolver = () => { if (!document.hidden) tick(); };
     document.addEventListener("visibilitychange", alVolver);
     return () => { clearInterval(i); document.removeEventListener("visibilitychange", alVolver); };
-  }, [selId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enDetalle, selId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const i = setInterval(() => setAhora(Date.now()), 30000);
@@ -2248,8 +2308,32 @@ function PortalUsuario({ perfil, onLogout }) {
   }, []);
 
   useEffect(() => {
-    if (selId) cargarDetalle(selId); else setDetalle(null);
-  }, [selId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (enDetalle) cargarDetalle(selId); else setDetalle(null);
+  }, [enDetalle, selId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const vinculado = miPerfil?.whatsapp_vinculado;
+
+  // En "vincular": el código se pide al entrar, la cuenta regresiva late cada
+  // segundo, y el perfil se revisa cada 4 s para enterarse en cuanto el bot
+  // canjea el código (y al volver de WhatsApp, sin esperar al siguiente tick).
+  const enVincular = vista === "vincular" && !vinculado;
+  useEffect(() => {
+    if (!enVincular) return;
+    if (!vinc || vinc.vence <= Date.now()) pedirCodigo();
+    const r = setInterval(() => setReloj(Date.now()), 1000);
+    const p = setInterval(() => { if (!document.hidden) cargarPerfil(); }, 4000);
+    const alVolver = () => { if (!document.hidden) cargarPerfil(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { clearInterval(r); clearInterval(p); document.removeEventListener("visibilitychange", alVolver); };
+  }, [enVincular]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const elegirTema = (t) => { setTema(t); setFormError(""); ir("detalles"); };
+
+  // Tocar una sugerencia la escribe en los detalles; la persona completa el resto.
+  const usarSugerencia = (s) => {
+    setFormError("");
+    setDesc((d) => (d.includes(s) ? d : d.trim() ? `${d.trim()} ${s}.` : `${s}. `));
+  };
 
   const crearTicket = async () => {
     setFormError("");
@@ -2261,31 +2345,42 @@ function PortalUsuario({ perfil, onLogout }) {
       setFormError("Dinos de qué área eres para que TI sepa a dónde ir.");
       return;
     }
+    // Solo una categoría que el backend conozca; si su lista cambió, que deduzca.
+    const cats = miPerfil?.categorias || [];
+    const categoria = tema?.categoria && (!cats.length || cats.includes(tema.categoria))
+      ? tema.categoria : undefined;
     try {
       const r = await fetch(`${API}/mi/tickets`, {
         method: "POST",
         headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({
           descripcion: desc.trim(),
-          categoria: categoria || undefined,
+          categoria,
           area: areaTicket.trim() || undefined,
         }),
       });
       const data = await r.json();
       if (!r.ok) { setFormError(data.detail || "No se pudo registrar el ticket."); return; }
-      setDesc(""); setCategoria(null); setAreaTicket("");
+      setDesc(""); setTema(null); setAreaTicket("");
       setExito({ id: data.id });
       await cargarTickets();
+      ir("enviado");
     } catch {
       setFormError("No se pudo conectar con el servidor.");
     }
   };
 
   const pedirCodigo = async () => {
+    setVincError("");
     try {
       const r = await fetch(`${API}/mi/vinculacion`, { method: "POST", headers: headers() });
-      if (r.ok) setVinc(await r.json());
-    } catch (e) { console.error("Error al pedir el código", e); }
+      if (!r.ok) { setVincError("No pudimos generar tu código. Intenta de nuevo."); return; }
+      const data = await r.json();
+      setVinc({ ...data, vence: Date.now() + (data.expira_minutos || 15) * 60000 });
+      setReloj(Date.now());
+    } catch {
+      setVincError("No se pudo conectar con el servidor.");
+    }
   };
 
   const enviarRespuesta = async () => {
@@ -2312,311 +2407,462 @@ function PortalUsuario({ perfil, onLogout }) {
     }
   };
 
-  const abiertos = misTickets.filter((t) => ESTADOS_ACTIVOS_SET.has(t.estado));
-  const cerrados = misTickets.filter((t) => !ESTADOS_ACTIVOS_SET.has(t.estado));
+  // Lo que espera tu respuesta va primero; después, lo más reciente.
+  const reciente = (a, b) => (b.fecha_iso || "").localeCompare(a.fecha_iso || "");
+  const abiertos = misTickets
+    .filter((t) => ESTADOS_ACTIVOS_SET.has(t.estado))
+    .sort((a, b) => (b.estado === "WAITING_FOR_USER") - (a.estado === "WAITING_FOR_USER") || reciente(a, b));
+  const cerrados = misTickets.filter((t) => !ESTADOS_ACTIVOS_SET.has(t.estado)).sort(reciente);
   const esperanTuRespuesta = abiertos.filter((t) => t.estado === "WAITING_FOR_USER");
-  const vinculado = miPerfil?.whatsapp_vinculado;
-  const cats = miPerfil?.categorias || [];
+  const nombreCorto = (perfil?.nombre || miPerfil?.nombre || "").trim().split(/\s+/)[0];
+  const area = miPerfil?.area || perfil?.area;
+  const temaActual = tema || TEMA_OTRO;
+  const faltaArea = miPerfil && !miPerfil.area;
+
+  const marca = (
+    <div className="bf-pt-marca">
+      <div className="bf-pt-logo">b</div>
+      <span>Soporte TI</span>
+    </div>
+  );
+
+  const invitacionWhatsApp = miPerfil && !vinculado && (
+    <button className="bf-pt-vinc-mini" onClick={() => ir("vincular")}>
+      <IcCelular size={20} />
+      <span>
+        <strong>Activa avisos por WhatsApp</strong>
+        <small>Para enterarte sin abrir esta página</small>
+      </span>
+      <IcSigue size={18} />
+    </button>
+  );
+
+  let pantalla;
+
+  if (vista === "detalles") {
+    pantalla = (
+      <>
+        <header className="bf-pt-top paso">
+          <button className="bf-pt-atras" aria-label="Regresar al paso 1" onClick={() => ir("tema")}>
+            <IcAtras size={22} />
+          </button>
+          <div className="bf-pt-pasos">
+            <span className="on" /><span className="on" />
+            <span className="bf-pt-pasos-txt">Paso 2 de 2</span>
+          </div>
+        </header>
+        <main className="bf-pt-cuerpo">
+          <div className="bf-pt-titulo">
+            <button className="bf-pt-tema-elegido" onClick={() => ir("tema")}>
+              <Icon d={temaActual.icono} size={16} strokeWidth="2" />
+              {temaActual.label}
+              <span>· cambiar</span>
+            </button>
+            <h1 className="bf-pt-h1">Cuéntanos qué pasa</h1>
+          </div>
+
+          {temaActual.sugerencias.length > 0 && (
+            <div className="bf-pt-field">
+              <span className="bf-pt-label-sec">Toca una si aplica</span>
+              <div className="bf-pt-sugs">
+                {temaActual.sugerencias.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className="bf-pt-sug"
+                    aria-pressed={desc.includes(s)}
+                    onClick={() => usarSugerencia(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="bf-pt-field">
+            <label htmlFor="bf-desc">Detalles</label>
+            <textarea
+              id="bf-desc"
+              className="bf-pt-textarea"
+              rows={6}
+              placeholder="Cuéntanos qué está pasando."
+              value={desc}
+              onChange={(e) => { setDesc(e.target.value); setFormError(""); }}
+            />
+            <span className="bf-pt-ayuda">Ayuda: {temaActual.ayuda}</span>
+          </div>
+
+          {faltaArea && (
+            <div className="bf-pt-field">
+              <label htmlFor="bf-area">¿De qué área eres?</label>
+              <input
+                id="bf-area"
+                className="bf-pt-input"
+                placeholder="Contabilidad, RH, Compras…"
+                value={areaTicket}
+                onChange={(e) => { setAreaTicket(e.target.value); setFormError(""); }}
+              />
+            </div>
+          )}
+
+          <div className="bf-pt-envio">
+            {formError && <p className="bf-pt-error">{formError}</p>}
+            <BotonAccion
+              className="bf-pt-primario"
+              onClick={crearTicket}
+              cargandoTexto="Enviando…"
+              disabled={desc.trim().length < 10 || (faltaArea && !areaTicket.trim())}
+            >
+              Enviar a TI
+              <IcSend size={18} />
+            </BotonAccion>
+            {miPerfil?.email && <p className="bf-pt-nota">Te llega el folio por correo al instante.</p>}
+          </div>
+        </main>
+      </>
+    );
+  } else if (vista === "enviado" && exito) {
+    pantalla = (
+      <main className="bf-pt-cuerpo">
+        <div className="bf-pt-centro">
+          <div className="bf-pt-check"><IcCheck size={32} strokeWidth="2.4" /></div>
+          <h1 className="bf-pt-h1">Listo{nombreCorto ? `, ${nombreCorto}` : ""}</h1>
+          <p>Ya lo registramos. Guarda tu folio por si necesitas preguntar:</p>
+          <div className="bf-pt-folio-grande">{exito.id}</div>
+          {miPerfil?.email && <p>También te lo mandamos a tu correo.</p>}
+        </div>
+
+        <Avance estado="OPEN" etiquetas />
+
+        {miPerfil && !vinculado && (
+          <section className="bf-pt-wa-card">
+            <div className="bf-pt-wa-card-tit">
+              <div className="bf-pt-wa-card-ic"><IcCelular size={20} /></div>
+              <h2>¿Te avisamos por WhatsApp?</h2>
+            </div>
+            <p>
+              Te escribimos cuando quede resuelto, para que lo confirmes desde ahí. Y la
+              próxima vez puedes levantar tickets desde WhatsApp, aunque no tengas computadora.
+            </p>
+            <button className="bf-pt-oscuro" onClick={() => ir("vincular")}>Activar avisos por WhatsApp</button>
+            <small>Toma un minuto, solo la primera vez</small>
+          </section>
+        )}
+
+        <div className="bf-pt-dos">
+          <button className="bf-pt-secundario" onClick={() => abrirTicket(exito.id)}>Ver mi ticket</button>
+          <button className="bf-pt-secundario" onClick={() => ir("tema")}>Levantar otro</button>
+        </div>
+      </main>
+    );
+  } else if (vista === "vincular") {
+    const restante = vinc ? Math.max(0, vinc.vence - reloj) : 0;
+    const vencido = !!vinc && restante === 0;
+    const codigoListo = vinc && !vencido;
+    pantalla = (
+      <>
+        <header className="bf-pt-top paso">
+          <button className="bf-pt-atras" aria-label="Regresar" onClick={() => ir(exito ? "enviado" : "mis")}>
+            <IcAtras size={22} />
+          </button>
+          <span className="bf-pt-top-titulo">Avisos por WhatsApp</span>
+        </header>
+        {vinculado ? (
+          <main className="bf-pt-cuerpo">
+            <div className="bf-pt-centro">
+              <div className="bf-pt-check"><IcCheck size={32} strokeWidth="2.4" /></div>
+              <h1 className="bf-pt-h1">Tu WhatsApp quedó ligado</h1>
+              <p>Ya puedes levantar tickets desde WhatsApp, y te avisamos por ahí cuando se resuelvan.</p>
+            </div>
+            <div className="bf-pt-envio">
+              <button className="bf-pt-primario" onClick={() => ir("mis")}>Ir a mis tickets</button>
+            </div>
+          </main>
+        ) : (
+          <main className="bf-pt-cuerpo">
+            <h1 className="bf-pt-h1">Liga tu WhatsApp en un toque</h1>
+            <ol className="bf-pt-instr">
+              <li>
+                <span className="bf-pt-instr-n">1</span>
+                <span>Toca el botón verde de abajo. Se abre WhatsApp con el mensaje ya escrito.</span>
+              </li>
+              <li>
+                <span className="bf-pt-instr-n">2</span>
+                <span>Dale <strong>enviar</strong>. Listo, el bot te confirma con tu nombre.</span>
+              </li>
+            </ol>
+
+            <section className="bf-pt-codigo" aria-label="Tu código">
+              {codigoListo ? (
+                <>
+                  <span className="bf-pt-codigo-tit">El mensaje que se envía</span>
+                  <div className="bf-pt-codigo-msg" aria-label={vinc.mensaje}>
+                    <span className="bf-pt-codigo-pre" aria-hidden="true">VINCULAR</span>
+                    <span className="bf-pt-codigo-letras" aria-hidden="true">
+                      {String(vinc.codigo).split("").map((c, i) => <span key={i}>{c}</span>)}
+                    </span>
+                  </div>
+                  <span className="bf-pt-codigo-vence"><IcClock size={15} /> Vence en {mmss(restante)}</span>
+                </>
+              ) : vencido ? (
+                <p className="bf-pt-hint">Este código ya venció. Genera otro abajo.</p>
+              ) : vincError ? (
+                <p className="bf-pt-error">{vincError}</p>
+              ) : (
+                <p className="bf-pt-hint bf-pt-generando"><IcSpinner size={16} className="bf-spin" /> Generando tu código…</p>
+              )}
+            </section>
+
+            {codigoListo && vinc.wa_link && (
+              <a className="bf-pt-wa" href={vinc.wa_link} target="_blank" rel="noreferrer">
+                <IcWhatsApp size={22} strokeWidth="2" />
+                Abrir WhatsApp y enviar
+              </a>
+            )}
+            {codigoListo && (
+              <details className="bf-pt-sinabrir" open={!vinc.wa_link}>
+                <summary>¿No se abrió WhatsApp?</summary>
+                <p>
+                  Manda <strong>{vinc.mensaje}</strong> al{" "}
+                  <strong>{numeroLegible(vinc.numero_bot) || "número de soporte de TI"}</strong> desde tu celular.
+                </p>
+              </details>
+            )}
+
+            <div className="bf-pt-vinc-pie">
+              <BotonAccion className="bf-pt-texto" onClick={pedirCodigo} cargandoTexto="Generando…">
+                Generar otro código
+              </BotonAccion>
+              <button className="bf-pt-texto gris" onClick={() => ir("mis")}>Ahora no</button>
+            </div>
+          </main>
+        )}
+      </>
+    );
+  } else if (vista === "mis") {
+    const lista = pestana === "abiertos" ? abiertos : cerrados;
+    pantalla = (
+      <>
+        <header className="bf-pt-top con-borde">
+          {marca}
+          <button className="bf-pt-salir" onClick={onLogout}>Salir</button>
+        </header>
+        <main className="bf-pt-cuerpo con-pie">
+          <div className="bf-pt-titulo">
+            <h1 className="bf-pt-h1">Mis tickets</h1>
+            <p className="bf-pt-sub">{perfil?.nombre}{area ? ` · ${area}` : ""}</p>
+          </div>
+
+          <div className="bf-pt-tabs" role="tablist" aria-label="Filtrar tickets">
+            <button role="tab" className="bf-pt-tab" aria-selected={pestana === "abiertos"} onClick={() => setPestana("abiertos")}>
+              Abiertos · {abiertos.length}
+            </button>
+            <button role="tab" className="bf-pt-tab" aria-selected={pestana === "resueltos"} onClick={() => setPestana("resueltos")}>
+              Resueltos · {cerrados.length}
+            </button>
+          </div>
+
+          {cargando ? (
+            <p className="bf-pt-vacio">Cargando…</p>
+          ) : misTickets.length === 0 ? (
+            <p className="bf-pt-vacio">
+              Todavía no has levantado ningún ticket. Cuando lo hagas, aquí puedes
+              seguirle la pista sin preguntarle a nadie.
+            </p>
+          ) : lista.length === 0 ? (
+            <p className="bf-pt-vacio">
+              {pestana === "abiertos" ? "No tienes tickets abiertos." : "Todavía no tienes tickets resueltos."}
+            </p>
+          ) : (
+            <div className="bf-pt-lista">
+              {lista.map((t) => (
+                <FilaPortal key={t.id} t={t} ahora={ahora} onAbrir={() => abrirTicket(t.id)} />
+              ))}
+            </div>
+          )}
+
+          {invitacionWhatsApp}
+        </main>
+        <div className="bf-pt-pie-fijo">
+          <button className="bf-pt-primario" onClick={() => ir("tema")}>
+            <IcPlus size={20} /> Nuevo ticket
+          </button>
+        </div>
+      </>
+    );
+  } else if (vista === "detalle") {
+    pantalla = (
+      <>
+        <header className="bf-pt-top paso">
+          <button className="bf-pt-atras" aria-label="Regresar a mis tickets" onClick={() => { setSelId(null); ir("mis"); }}>
+            <IcAtras size={22} />
+          </button>
+          <span className="bf-pt-top-titulo">{selId}</span>
+        </header>
+        <main className="bf-pt-cuerpo">
+          <DetallePortal
+            id={selId}
+            t={detalle}
+            cargando={cargandoDetalle}
+            respuesta={respuesta}
+            setRespuesta={setRespuesta}
+            feedback={respFeedback}
+            onEnviar={enviarRespuesta}
+          />
+        </main>
+      </>
+    );
+  } else {
+    // "tema": la pantalla de inicio
+    const primero = esperanTuRespuesta[0];
+    pantalla = (
+      <>
+        <header className="bf-pt-top">
+          {marca}
+          <button className="bf-pt-mis" onClick={() => ir("mis")}>
+            Mis tickets
+            {abiertos.length > 0 && <span className="bf-pt-mis-n">{abiertos.length}</span>}
+          </button>
+        </header>
+        <main className="bf-pt-cuerpo">
+          <div className="bf-pt-titulo">
+            <div className="bf-pt-pasos">
+              <span className="on" /><span />
+              <span className="bf-pt-pasos-txt">Paso 1 de 2</span>
+            </div>
+            <h1 className="bf-pt-h1">¿Qué está fallando{nombreCorto ? `, ${nombreCorto}` : ""}?</h1>
+          </div>
+
+          <div className="bf-pt-temas">
+            {TEMAS_PORTAL.map((t) => (
+              <button key={t.id} className={`bf-pt-tema${t.categoria ? "" : " otro"}`} onClick={() => elegirTema(t)}>
+                <Icon d={t.icono} size={26} strokeWidth="2" />
+                <span className="bf-pt-tema-nombre">{t.label}</span>
+                <span className="bf-pt-tema-hint">{t.hint}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Lo que necesita tu atención: TI está esperando tu respuesta */}
+          {primero && (
+            <button
+              className="bf-pt-alerta"
+              onClick={() => (esperanTuRespuesta.length === 1 ? abrirTicket(primero.id) : ir("mis"))}
+            >
+              <IcChat size={20} />
+              <span>
+                <strong>TI te preguntó algo</strong>{" "}
+                {esperanTuRespuesta.length === 1 ? <>en {primero.id}</> : <>en {esperanTuRespuesta.length} tickets</>}
+              </span>
+              <IcSigue size={18} />
+            </button>
+          )}
+        </main>
+      </>
+    );
+  }
 
   return (
     <div className="bf-portal">
       <style>{CSS}</style>
-
-      <header className="bf-pt-head">
-        <div className="bf-pt-brand">
-          <div className="bf-logo">b</div>
-          <div>
-            <div className="bf-brand-name">bioflex</div>
-            <div className="bf-brand-tag">Soporte TI</div>
-          </div>
-        </div>
-        <div className="bf-pt-user">
-          <div className="bf-pt-user-txt">
-            <strong>{perfil?.nombre}</strong>
-            <span>{miPerfil?.area || perfil?.area || "Sin área"}</span>
-          </div>
-          <button className="bf-pt-salir" onClick={onLogout}>Salir</button>
-        </div>
-      </header>
-
-      {/* Lo que necesita tu atención va arriba de todo */}
-      {esperanTuRespuesta.length > 0 && (
-        <div className="bf-pt-alerta">
-          <span className="bf-pt-alerta-dot" />
-          <span>
-            TI te preguntó algo en{" "}
-            {esperanTuRespuesta.map((t, i) => (
-              <span key={t.id}>
-                {i > 0 && ", "}
-                <button className="bf-pt-link" onClick={() => setSelId(t.id)}>{t.id}</button>
-              </span>
-            ))}
-            . Están esperando tu respuesta para seguir.
-          </span>
-        </div>
-      )}
-
-      {/* Vinculación de WhatsApp: un tap y queda */}
-      {miPerfil && !vinculado && !vincCerrado && (
-        <section className="bf-pt-vinc">
-          <div className="bf-pt-vinc-txt">
-            <h3>Levanta tickets desde WhatsApp</h3>
-            <p>
-              Útil justo cuando no puedes usar esta página: no prende tu computadora,
-              no tienes internet o no puedes entrar al correo.
-            </p>
-          </div>
-          {!vinc ? (
-            <div className="bf-pt-vinc-acc">
-              <BotonAccion className="bf-resolve" onClick={pedirCodigo} cargandoTexto="Generando…">
-                Vincular mi WhatsApp
-              </BotonAccion>
-              <button className="bf-pt-link" onClick={() => setVincCerrado(true)}>Después</button>
-            </div>
-          ) : (
-            <div className="bf-pt-vinc-codigo">
-              {vinc.wa_link ? (
-                <>
-                  <a className="bf-resolve bf-pt-wa" href={vinc.wa_link} target="_blank" rel="noreferrer">
-                    Abrir WhatsApp y enviar
-                  </a>
-                  <p className="bf-pt-hint">
-                    Se abre el chat con el mensaje <code>{vinc.mensaje}</code> ya escrito.
-                    Solo dale enviar. El código vence en {vinc.expira_minutos} minutos.
-                  </p>
-                </>
-              ) : (
-                <p className="bf-pt-hint">
-                  Mándale este mensaje al número de soporte de TI:{" "}
-                  <code>{vinc.mensaje}</code> — vence en {vinc.expira_minutos} minutos.
-                </p>
-              )}
-              <button className="bf-pt-link" onClick={pedirCodigo}>Generar otro código</button>
-            </div>
-          )}
-        </section>
-      )}
-
-      <main className="bf-pt-main">
-
-        {/* ── Levantar un ticket ───────────────────────────────── */}
-        <section className="bf-pt-card">
-          <h2 className="bf-pt-h2">¿En qué podemos ayudarte?</h2>
-
-          {exito ? (
-            <div className="bf-pt-exito">
-              <div className="bf-pt-exito-folio">{exito.id}</div>
-              <p>
-                Listo, ya lo registramos. Te avisamos en cuanto alguien de TI lo tome
-                {vinculado ? " por WhatsApp" : ""}.
-              </p>
-              <div className="bf-pt-exito-acc">
-                <button className="bf-resolve" onClick={() => { setExito(null); setSelId(exito.id); }}>
-                  Ver mi ticket
-                </button>
-                <button className="bf-pt-link" onClick={() => setExito(null)}>
-                  Levantar otro
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <textarea
-                className="bf-pt-textarea"
-                placeholder="Cuéntanos qué está pasando. Mientras más detalle, menos preguntas de regreso."
-                value={desc}
-                rows={5}
-                onChange={(e) => { setDesc(e.target.value); setFormError(""); }}
-              />
-
-              <div className="bf-pt-field">
-                <label>Sobre qué es <span className="bf-pt-opt">— si no eliges, lo deducimos</span></label>
-                <div className="bf-pt-chips">
-                  {cats.map((c) => (
-                    <button
-                      key={c}
-                      className={`bf-pt-chip${categoria === c ? " on" : ""}`}
-                      onClick={() => setCategoria(categoria === c ? null : c)}
-                      type="button"
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {miPerfil && !miPerfil.area && (
-                <div className="bf-pt-field">
-                  <label htmlFor="bf-area">¿De qué área eres?</label>
-                  <input
-                    id="bf-area"
-                    className="bf-pt-input"
-                    placeholder="Contabilidad, RH, Compras…"
-                    value={areaTicket}
-                    onChange={(e) => { setAreaTicket(e.target.value); setFormError(""); }}
-                  />
-                </div>
-              )}
-
-
-              {formError && <p className="bf-login-error">{formError}</p>}
-
-              <BotonAccion
-                className="bf-resolve bf-pt-enviar"
-                onClick={crearTicket}
-                cargandoTexto="Registrando…"
-                disabled={desc.trim().length < 10 || (miPerfil && !miPerfil.area && !areaTicket.trim())}
-              >
-                Enviar
-              </BotonAccion>
-            </>
-          )}
-        </section>
-
-        {/* ── Mis tickets / detalle ────────────────────────────── */}
-        <section className="bf-pt-card">
-          {!selId ? (
-            <>
-              <h2 className="bf-pt-h2">
-                Mis tickets
-                {abiertos.length > 0 && <span className="bf-pt-contador">{abiertos.length} abierto{abiertos.length !== 1 ? "s" : ""}</span>}
-              </h2>
-
-              {cargando ? (
-                <p className="bf-pt-vacio">Cargando…</p>
-              ) : misTickets.length === 0 ? (
-                <p className="bf-pt-vacio">
-                  Todavía no has levantado ningún ticket. Cuando lo hagas, aquí puedes
-                  seguirle la pista sin preguntarle a nadie.
-                </p>
-              ) : (
-                <>
-                  {abiertos.map((t) => (
-                    <FilaPortal key={t.id} t={t} ahora={ahora} onAbrir={() => setSelId(t.id)} />
-                  ))}
-                  {cerrados.length > 0 && (
-                    <>
-                      <div className="bf-pt-sep">Cerrados</div>
-                      {cerrados.map((t) => (
-                        <FilaPortal key={t.id} t={t} ahora={ahora} onAbrir={() => setSelId(t.id)} />
-                      ))}
-                    </>
-                  )}
-                </>
-              )}
-            </>
-          ) : (
-            <DetallePortal
-              id={selId}
-              t={detalle}
-              cargando={cargandoDetalle}
-              respuesta={respuesta}
-              setRespuesta={setRespuesta}
-              feedback={respFeedback}
-              onEnviar={enviarRespuesta}
-              onVolver={() => { setSelId(null); setRespuesta(""); }}
-            />
-          )}
-        </section>
-      </main>
+      <div className={`bf-pt-pantalla${vista === "mis" ? " gris" : ""}`}>{pantalla}</div>
     </div>
   );
 }
 
 function FilaPortal({ t, ahora, onAbrir }) {
   const m = metaUsuario(t.estado);
-  const ms = edadMs(t, ahora);
+  const esTuya = t.estado === "WAITING_FOR_USER";
+  const activo = ESTADOS_ACTIVOS_SET.has(t.estado);
+  const quien = t.asignado_nombre ? t.asignado_nombre.split(/\s+/)[0] : "TI";
   return (
-    <button className="bf-pt-fila" onClick={onAbrir}>
+    <button className={`bf-pt-fila${esTuya ? " es-tuya" : ""}`} onClick={onAbrir}>
       <div className="bf-pt-fila-top">
         <span className="bf-pt-folio">{t.id}</span>
         <span className={`bf-pt-estado t-${m.tono}`}>{m.label}</span>
-        {t.canal === "whatsapp" && <span className="bf-pt-canal">WhatsApp</span>}
-        <span className="bf-pt-edad">{textoEdad(ms)}</span>
+        <span className="bf-pt-edad">{haceCuanto(edadMs(t, ahora))}</span>
       </div>
       <div className="bf-pt-fila-desc">{t.descripcion || ultimoMensaje(t)}</div>
+      {activo && !esTuya && <Avance estado={t.estado} />}
       <div className="bf-pt-fila-pie">
-        {t.asignado_nombre
-          ? `${t.asignado_nombre} lo está atendiendo`
-          : m.sigue}
+        <span>
+          {esTuya
+            ? `${quien} necesita tu respuesta para seguir →`
+            : t.asignado_nombre
+              ? <><strong>{t.asignado_nombre}</strong> lo está atendiendo</>
+              : m.sigue}
+        </span>
+        {t.canal === "whatsapp" && <span className="bf-pt-canal">WhatsApp</span>}
       </div>
     </button>
   );
 }
 
-function DetallePortal({ id, t, cargando, respuesta, setRespuesta, feedback, onEnviar, onVolver }) {
+function DetallePortal({ id, t, cargando, respuesta, setRespuesta, feedback, onEnviar }) {
   const m = t ? metaUsuario(t.estado) : null;
   const puedeResponder = t && !ESTADOS_TERMINALES_SET.has(t.estado);
 
+  if (cargando && !t) return <p className="bf-pt-vacio">Cargando…</p>;
+  if (!t) return <p className="bf-pt-vacio">No pudimos abrir este ticket.</p>;
+
   return (
     <>
-      <div className="bf-pt-detalle-head">
-        <button className="bf-pt-link" onClick={onVolver}>← Mis tickets</button>
-        <span className="bf-pt-folio">{id}</span>
+      <div className="bf-pt-detalle-estado">
+        <span className={`bf-pt-estado t-${m.tono}`}>{m.label}</span>
+        <p>{t.asignado_nombre ? `${t.asignado_nombre} lo está atendiendo.` : m.sigue}</p>
+      </div>
+      <Avance estado={t.estado} etiquetas />
+
+      <dl className="bf-pt-meta">
+        <div><dt>Levantado</dt><dd>{t.fecha}</dd></div>
+        <div><dt>Categoría</dt><dd>{t.categoria || "—"}</dd></div>
+        <div><dt>Canal</dt><dd>{t.canal === "web" ? "Portal" : "WhatsApp"}</dd></div>
+        {t.fecha_cierre && <div><dt>Resuelto</dt><dd>{t.fecha_cierre}</dd></div>}
+      </dl>
+
+      <div className="bf-pt-sep">Conversación</div>
+      <div className="bf-pt-chat">
+        {(t.historial || []).length === 0 ? (
+          <p className="bf-pt-vacio">Sin mensajes todavía.</p>
+        ) : (
+          (t.historial || []).map((msg, i) => (
+            <div key={i} className={`bf-pt-msg ${msg.role === "user" ? "mio" : "ti"}`}>
+              <WaText text={msg.content} />
+            </div>
+          ))
+        )}
       </div>
 
-      {cargando && !t ? (
-        <p className="bf-pt-vacio">Cargando…</p>
-      ) : !t ? (
-        <p className="bf-pt-vacio">No pudimos abrir este ticket.</p>
+      {puedeResponder ? (
+        <div className="bf-pt-responder">
+          <label htmlFor="bf-respuesta" className="bf-pt-label-sec">
+            {t.estado === "WAITING_FOR_USER" ? "TI está esperando tu respuesta" : "¿Algo más que TI deba saber?"}
+          </label>
+          <textarea
+            id="bf-respuesta"
+            className="bf-pt-textarea"
+            rows={3}
+            placeholder="Escribe tu mensaje…"
+            value={respuesta}
+            onChange={(e) => setRespuesta(e.target.value)}
+          />
+          <BotonAccion
+            className="bf-pt-primario"
+            onClick={onEnviar}
+            cargandoTexto="Enviando…"
+            disabled={!respuesta.trim()}
+          >
+            Enviar a TI
+          </BotonAccion>
+          {feedback === "ok" && <span className="bf-pt-ok">Enviado</span>}
+          {feedback && feedback !== "ok" && <p className="bf-pt-error">{feedback}</p>}
+        </div>
       ) : (
-        <>
-          <div className="bf-pt-detalle-estado">
-            <span className={`bf-pt-estado t-${m.tono}`}>{m.label}</span>
-            <p>{t.asignado_nombre ? `${t.asignado_nombre} lo está atendiendo.` : m.sigue}</p>
-          </div>
-
-          <dl className="bf-pt-meta">
-            <div><dt>Levantado</dt><dd>{t.fecha}</dd></div>
-            <div><dt>Categoría</dt><dd>{t.categoria || "—"}</dd></div>
-            <div><dt>Canal</dt><dd>{t.canal === "web" ? "Portal" : "WhatsApp"}</dd></div>
-            {t.fecha_cierre && <div><dt>Resuelto</dt><dd>{t.fecha_cierre}</dd></div>}
-          </dl>
-
-          <div className="bf-pt-sep">Conversación</div>
-          <div className="bf-pt-chat">
-            {(t.historial || []).length === 0 ? (
-              <p className="bf-pt-vacio">Sin mensajes todavía.</p>
-            ) : (
-              (t.historial || []).map((msg, i) => (
-                <div key={i} className={`bf-pt-msg ${msg.role === "user" ? "mio" : "ti"}`}>
-                  <WaText text={msg.content} />
-                </div>
-              ))
-            )}
-          </div>
-
-          {puedeResponder ? (
-            <div className="bf-pt-responder">
-              <textarea
-                className="bf-pt-textarea"
-                rows={3}
-                placeholder={t.estado === "WAITING_FOR_USER"
-                  ? "TI está esperando tu respuesta…"
-                  : "Agregar información para TI…"}
-                value={respuesta}
-                onChange={(e) => setRespuesta(e.target.value)}
-              />
-              <div className="bf-pt-responder-pie">
-                <BotonAccion
-                  className="bf-resolve"
-                  onClick={onEnviar}
-                  cargandoTexto="Enviando…"
-                  disabled={!respuesta.trim()}
-                >
-                  Enviar a TI
-                </BotonAccion>
-                {feedback === "ok" && <span className="bf-pt-ok">Enviado</span>}
-                {feedback && feedback !== "ok" && <span className="bf-login-error">{feedback}</span>}
-              </div>
-            </div>
-          ) : (
-            <p className="bf-pt-hint">
-              Este ticket ya está cerrado. Si el problema volvió, levanta uno nuevo y
-              menciona el folio {id}.
-            </p>
-          )}
-        </>
+        <p className="bf-pt-hint">
+          Este ticket ya está cerrado. Si el problema volvió, levanta uno nuevo y
+          menciona el folio {id}.
+        </p>
       )}
     </>
   );
@@ -3151,142 +3397,211 @@ const CSS = `
 }
 
 /* ══════════════════════════════════════════════════════════════
-   PORTAL DEL USUARIO FINAL
+   LOGIN (TI y usuarios) — pensado primero para celular
+   ══════════════════════════════════════════════════════════════ */
+/* El naranja de botón es más oscuro que C.naranja: con texto blanco,
+   #D06430 da 3.8:1 y #B9531F pasa el 4.5:1. */
+.bf-lg{min-height:100vh;background:#fff;color:${C.text};
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.bf-lg *{box-sizing:border-box}
+.bf-lg-card{min-height:100vh;display:flex;flex-direction:column;background:#fff}
+.bf-lg-head{background:${C.azulDark};color:#fff;padding:56px 24px 36px;display:flex;flex-direction:column;gap:22px;border-radius:0 0 28px 28px}
+.bf-lg-logo{width:52px;height:52px;border-radius:15px;background:#B9531F;color:#fff;font-weight:800;font-size:28px;display:flex;align-items:center;justify-content:center}
+.bf-lg-titulo{margin:0;font-size:28px;font-weight:800;letter-spacing:-0.6px;line-height:1.15}
+.bf-lg-cuerpo{flex:1;padding:28px 24px 24px;display:flex;flex-direction:column;gap:18px}
+.bf-lg-aviso{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:12px;background:#E3EFEE;color:${C.azulDark};font-size:14px;line-height:1.45}
+.bf-lg-aviso svg{flex-shrink:0;margin-top:1px}
+.bf-lg-campo{display:flex;flex-direction:column;gap:8px}
+.bf-lg-campo label{font-size:14px;font-weight:700;color:${C.azulDark}}
+.bf-lg-input{width:100%;height:52px;font-family:inherit;font-size:16px;color:${C.text};border:1.5px solid ${C.borderStrong};
+  border-radius:14px;padding:0 16px;outline:none;background:#fff;transition:border-color .15s,box-shadow .15s}
+.bf-lg-input:focus{border-color:${C.azulLight};box-shadow:0 0 0 4px rgba(133,182,196,0.18)}
+.bf-lg-input::placeholder{color:#5E7B79}
+.bf-lg-pass{position:relative;display:flex}
+.bf-lg-pass .bf-lg-input{padding-right:56px}
+.bf-lg-ojo{position:absolute;right:4px;top:4px;width:44px;height:44px;border:none;border-radius:10px;background:transparent;
+  color:#566F6D;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.bf-lg-entrar{margin-top:6px;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:54px;border:none;
+  border-radius:16px;background:#B9531F;color:#fff;font-family:inherit;font-size:16px;font-weight:700;cursor:pointer;transition:background .15s}
+.bf-lg-entrar:hover:not(:disabled){background:#A3481A}
+.bf-lg-entrar:disabled{opacity:.6;cursor:default}
+.bf-lg .bf-login-error{margin:0}
+.bf-lg-ayuda{margin:0;text-align:center;font-size:14px;line-height:1.5;color:#566F6D}
+.bf-lg-ayuda strong{color:${C.azulDark}}
+.bf-lg-pie{margin-top:auto;padding-top:18px;border-top:1px solid ${C.border};text-align:center;font-size:14px;line-height:1.5;color:#566F6D}
+.bf-lg-pie strong{color:#B9531F}
+@media (min-width:600px){
+  .bf-lg{background:${C.bg};display:flex;align-items:center;justify-content:center;padding:32px 16px}
+  .bf-lg-card{min-height:0;width:100%;max-width:420px;border-radius:24px;overflow:hidden;box-shadow:0 12px 40px rgba(21,62,62,0.12)}
+  .bf-lg-head{padding:40px 28px 30px}
+  .bf-lg-cuerpo{padding:28px}
+  .bf-lg-pie{margin-top:8px}
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PORTAL DEL USUARIO FINAL — una pantalla a la vez, como app
    ══════════════════════════════════════════════════════════════ */
 .bf-portal{min-height:100vh;background:${C.bg};color:${C.text};
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.bf-portal *{box-sizing:border-box}
+.bf-portal button{font-family:inherit;cursor:pointer}
+.bf-portal button:focus-visible,.bf-portal a:focus-visible{outline:3px solid ${C.azulLight};outline-offset:2px}
+/* En computadora, la misma columna de celular centrada */
+.bf-pt-pantalla{max-width:560px;margin:0 auto;min-height:100vh;background:#fff;display:flex;flex-direction:column}
+.bf-pt-pantalla.gris{background:${C.bg}}
+@media (min-width:600px){.bf-pt-pantalla{border-left:1px solid ${C.border};border-right:1px solid ${C.border}}}
 
-.bf-pt-head{display:flex;align-items:center;justify-content:space-between;gap:16px;
-  flex-wrap:wrap;padding:16px 28px;background:${C.surface};
-  border-bottom:1px solid ${C.border}}
-.bf-pt-brand{display:flex;align-items:center;gap:12px}
-.bf-pt-user{display:flex;align-items:center;gap:14px}
-.bf-pt-user-txt{display:flex;flex-direction:column;line-height:1.3;text-align:right}
-.bf-pt-user-txt strong{font-size:13px;color:${C.text}}
-.bf-pt-user-txt span{font-size:11px;color:${C.textMuted}}
-.bf-pt-salir{background:none;border:1px solid ${C.border};color:${C.textMuted};
-  border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit}
-.bf-pt-salir:hover{border-color:${C.borderStrong};color:${C.text}}
+.bf-pt-top{display:flex;align-items:center;gap:10px;padding:14px 16px;min-height:64px}
+.bf-pt-top.con-borde{background:#fff;border-bottom:1px solid ${C.border}}
+.bf-pt-top.paso{padding:8px 8px 8px 4px;gap:4px}
+.bf-pt-marca{display:flex;align-items:center;gap:10px;flex:1;font-size:15px;font-weight:700;color:${C.azulDark}}
+.bf-pt-logo{width:32px;height:32px;border-radius:9px;background:#B9531F;color:#fff;font-weight:800;font-size:17px;display:flex;align-items:center;justify-content:center}
+.bf-pt-mis{display:flex;align-items:center;gap:6px;height:44px;padding:0 14px;border:none;border-radius:22px;background:${C.bg};color:${C.azulDark};font-size:14px;font-weight:700}
+.bf-pt-mis-n{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:${C.azulDark};color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center}
+.bf-pt-atras{width:44px;height:44px;border:none;border-radius:22px;background:transparent;color:${C.azulDark};display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bf-pt-top-titulo{font-size:15px;font-weight:700;color:${C.azulDark}}
+.bf-pt-salir{height:44px;padding:0 12px;border:none;background:transparent;color:#566F6D;font-size:14px;font-weight:700}
 
-/* Lo que espera al usuario: arriba de todo, imposible de no ver */
-.bf-pt-alerta{display:flex;align-items:center;gap:10px;margin:0;
-  padding:13px 28px;background:rgba(208,100,48,0.10);
-  border-bottom:1px solid rgba(208,100,48,0.22);
-  font-size:13px;color:#8C4420}
-.bf-pt-alerta-dot{width:8px;height:8px;border-radius:50%;background:${C.naranja};
-  flex:none;animation:bf-pulso 2s ease-in-out infinite}
-@keyframes bf-pulso{0%,100%{opacity:1}50%{opacity:.35}}
+.bf-pt-cuerpo{flex:1;padding:12px 16px 24px;display:flex;flex-direction:column;gap:20px}
+.bf-pt-cuerpo.con-pie{padding-bottom:110px}
+.bf-pt-titulo{display:flex;flex-direction:column;gap:10px}
+.bf-pt-h1{margin:0;font-size:28px;font-weight:800;letter-spacing:-0.6px;line-height:1.15;color:${C.azulDark}}
+.bf-pt-sub{margin:0;font-size:14px;color:#566F6D}
+.bf-pt-pasos{display:flex;align-items:center;gap:8px}
+.bf-pt-pasos > span:not(.bf-pt-pasos-txt){width:28px;height:5px;border-radius:3px;background:${C.border}}
+.bf-pt-pasos > span.on{background:#B9531F}
+.bf-pt-pasos-txt{margin-left:4px;font-size:13px;font-weight:600;color:#566F6D}
 
-/* Vinculación de WhatsApp */
-.bf-pt-vinc{display:flex;align-items:center;justify-content:space-between;gap:20px;
-  flex-wrap:wrap;margin:20px 28px 0;padding:18px 22px;background:${C.surface};
-  border:1px solid ${C.border};border-left:3px solid ${C.azulLight};border-radius:12px}
-.bf-pt-vinc-txt h3{margin:0 0 4px;font-size:14px;font-weight:650;color:${C.text}}
-.bf-pt-vinc-txt p{margin:0;font-size:12.5px;color:${C.textMuted};max-width:62ch;line-height:1.5}
-.bf-pt-vinc-acc{display:flex;align-items:center;gap:14px;flex:none}
-.bf-pt-vinc-codigo{display:flex;flex-direction:column;gap:8px;align-items:flex-start;flex:none}
-.bf-pt-wa{text-decoration:none;display:inline-block}
+/* Paso 1: temas */
+.bf-pt-temas{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.bf-pt-tema{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px 14px;border-radius:16px;
+  border:1.5px solid transparent;background:${C.bg};color:${C.azulDark};text-align:left;transition:border-color .15s}
+.bf-pt-tema:hover{border-color:${C.borderStrong}}
+.bf-pt-tema.otro{background:#fff;border:1.5px dashed ${C.borderStrong}}
+.bf-pt-tema-nombre{font-size:16px;font-weight:700}
+.bf-pt-tema-hint{font-size:13px;line-height:1.35;color:#566F6D}
+.bf-pt-alerta{margin-top:auto;display:flex;align-items:center;gap:12px;width:100%;padding:14px;border-radius:14px;
+  background:#FBF1E1;border:1px solid #EBCB97;color:#8A5A0F;font-size:14px;line-height:1.35;text-align:left}
+.bf-pt-alerta > span{flex:1}
 
-.bf-pt-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);
-  gap:20px;padding:20px 28px 40px;align-items:start;max-width:1280px;margin:0 auto}
-.bf-pt-card{background:${C.surface};border:1px solid ${C.border};border-radius:14px;
-  padding:22px 24px;display:flex;flex-direction:column;gap:16px}
-.bf-pt-h2{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em;color:${C.text};
-  display:flex;align-items:center;justify-content:space-between;gap:12px}
-.bf-pt-contador{font-size:11px;font-weight:600;color:${C.openText};
-  background:${C.openBg};border-radius:999px;padding:3px 10px}
-
-/* Formulario */
-.bf-pt-textarea{width:100%;border:1px solid ${C.border};border-radius:10px;
-  padding:12px 14px;font-size:14px;font-family:inherit;color:${C.text};
-  background:${C.surfaceAlt};resize:vertical;line-height:1.55;box-sizing:border-box}
-.bf-pt-textarea:focus{outline:none;border-color:${C.azulLight};background:${C.surface}}
-.bf-pt-input{width:100%;border:1px solid ${C.border};border-radius:10px;
-  padding:10px 13px;font-size:13.5px;font-family:inherit;color:${C.text};
-  background:${C.surfaceAlt};box-sizing:border-box}
-.bf-pt-input:focus{outline:none;border-color:${C.azulLight};background:${C.surface}}
+/* Paso 2: detalles */
+.bf-pt-tema-elegido{align-self:flex-start;display:flex;align-items:center;gap:8px;min-height:36px;padding:0 12px;border:none;
+  border-radius:18px;background:#E3EFEE;color:${C.azulDark};font-size:14px;font-weight:700}
+.bf-pt-tema-elegido span{font-weight:600;color:#566F6D}
 .bf-pt-field{display:flex;flex-direction:column;gap:8px}
-.bf-pt-field label{font-size:12.5px;font-weight:600;color:${C.text}}
-.bf-pt-opt{font-weight:400;color:${C.textFaint}}
-.bf-pt-chips{display:flex;flex-wrap:wrap;gap:7px}
-.bf-pt-chip{font-size:12.5px;padding:6px 13px;border-radius:999px;cursor:pointer;
-  border:1px solid ${C.border};background:${C.surface};color:${C.textMuted};
-  font-family:inherit;transition:all .12s}
-.bf-pt-chip:hover{border-color:${C.azulLight};color:${C.text}}
-.bf-pt-chip.on{background:${C.azulDark};border-color:${C.azulDark};color:#fff;font-weight:600}
-.bf-pt-enviar{align-self:flex-start;min-width:130px}
-.bf-pt-enviar:disabled{opacity:.45;cursor:not-allowed}
+.bf-pt-field > label{font-size:14px;font-weight:700;color:${C.azulDark}}
+.bf-pt-label-sec{font-size:13px;font-weight:600;color:#566F6D}
+.bf-pt-sugs{display:flex;flex-wrap:wrap;gap:8px}
+.bf-pt-sug{min-height:40px;padding:0 14px;border-radius:20px;border:1.5px solid ${C.borderStrong};background:#fff;color:${C.azulDark};font-size:14px;font-weight:600}
+.bf-pt-sug[aria-pressed="true"]{border-color:${C.azulDark};background:${C.azulDark};color:#fff}
+/* 16px en los campos: con menos, Safari de iPhone hace zoom al escribir */
+.bf-pt-textarea,.bf-pt-input{width:100%;font-family:inherit;font-size:16px;line-height:1.45;color:${C.text};
+  border:1.5px solid ${C.borderStrong};border-radius:14px;padding:12px 14px;background:#fff;outline:none;transition:border-color .15s,box-shadow .15s}
+.bf-pt-textarea{resize:vertical}
+.bf-pt-textarea:focus,.bf-pt-input:focus{border-color:${C.azulLight};box-shadow:0 0 0 4px rgba(133,182,196,0.18)}
+.bf-pt-textarea::placeholder,.bf-pt-input::placeholder{color:#5E7B79}
+.bf-pt-ayuda{font-size:13px;line-height:1.4;color:#566F6D}
+.bf-pt-envio{margin-top:auto;display:flex;flex-direction:column;gap:10px}
+.bf-pt-primario{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:54px;border:none;border-radius:16px;
+  background:#B9531F;color:#fff;font-size:16px;font-weight:700;transition:background .15s}
+.bf-pt-primario:hover:not(:disabled){background:#A3481A}
+.bf-pt-primario:disabled{opacity:.45;cursor:default}
+.bf-pt-nota{margin:0;text-align:center;font-size:13px;color:#566F6D}
+.bf-pt-error{margin:0;font-size:13.5px;color:${C.rojo}}
+.bf-pt-hint{margin:0;font-size:14px;line-height:1.5;color:#566F6D}
+.bf-pt-generando{display:flex;align-items:center;gap:8px}
 
-/* Confirmación con folio: lo que el usuario puede citar */
-.bf-pt-exito{display:flex;flex-direction:column;gap:12px;align-items:flex-start;
-  padding:22px;background:${C.doneBg};border-radius:12px}
-.bf-pt-exito-folio{font-size:26px;font-weight:700;letter-spacing:-.02em;color:${C.doneText};
-  font-variant-numeric:tabular-nums}
-.bf-pt-exito p{margin:0;font-size:13.5px;color:${C.text};line-height:1.55}
-.bf-pt-exito-acc{display:flex;align-items:center;gap:16px;margin-top:4px}
+/* Enviado */
+.bf-pt-centro{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;padding-top:32px}
+.bf-pt-centro p{margin:0;font-size:15px;line-height:1.45;color:#566F6D}
+.bf-pt-check{width:64px;height:64px;border-radius:32px;background:#E3EFEE;color:#2E6E69;display:flex;align-items:center;justify-content:center}
+.bf-pt-folio-grande{font-size:40px;font-weight:800;letter-spacing:1px;color:${C.azulDark}}
+.bf-pt-avance{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.bf-pt-avance.con-etiquetas{gap:6px}
+.bf-pt-avance li{display:flex;flex-direction:column;gap:6px}
+.bf-pt-avance-barra{height:4px;border-radius:2px;background:${C.borderStrong}}
+.bf-pt-avance.con-etiquetas .bf-pt-avance-barra{height:5px}
+.bf-pt-avance li.hecho .bf-pt-avance-barra{background:#2E6E69}
+.bf-pt-avance-txt{font-size:11.5px;font-weight:600;color:#566F6D}
+.bf-pt-avance li.hecho .bf-pt-avance-txt{color:#2E6E69}
+.bf-pt-avance li[aria-current="step"] .bf-pt-avance-txt{color:${C.azulDark};font-weight:700}
+.bf-pt-wa-card{background:${C.bg};border-radius:18px;padding:18px 16px;display:flex;flex-direction:column;gap:12px}
+.bf-pt-wa-card-tit{display:flex;align-items:center;gap:12px}
+.bf-pt-wa-card-ic{width:40px;height:40px;border-radius:12px;background:${C.azulDark};color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bf-pt-wa-card h2{margin:0;font-size:17px;font-weight:800;color:${C.azulDark};line-height:1.25}
+.bf-pt-wa-card p{margin:0;font-size:14px;line-height:1.5}
+.bf-pt-wa-card small{text-align:center;font-size:13px;color:#566F6D}
+.bf-pt-oscuro{height:50px;border:none;border-radius:14px;background:${C.azulDark};color:#fff;font-size:15px;font-weight:700}
+.bf-pt-dos{margin-top:auto;display:flex;gap:10px}
+.bf-pt-secundario{flex:1;height:50px;border-radius:14px;border:1.5px solid ${C.borderStrong};background:#fff;color:${C.azulDark};font-size:15px;font-weight:700}
 
-/* Lista de mis tickets */
-.bf-pt-fila{display:flex;flex-direction:column;gap:6px;width:100%;text-align:left;
-  padding:14px 16px;border:1px solid ${C.border};border-radius:11px;
-  background:${C.surface};cursor:pointer;font-family:inherit;transition:all .12s}
-.bf-pt-fila:hover{border-color:${C.azulLight};background:${C.surfaceAlt}}
-.bf-pt-fila + .bf-pt-fila{margin-top:9px}
-.bf-pt-fila-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.bf-pt-folio{font-size:12.5px;font-weight:700;color:${C.text};
-  font-variant-numeric:tabular-nums;letter-spacing:.01em}
-.bf-pt-estado{font-size:11px;font-weight:650;padding:3px 9px;border-radius:999px}
-.bf-pt-estado.t-espera{background:${C.openBg};color:${C.openText}}
-.bf-pt-estado.t-activo{background:rgba(133,182,196,0.20);color:#2E6E69}
-.bf-pt-estado.t-tuyo{background:rgba(208,100,48,0.14);color:#A04E28}
-.bf-pt-estado.t-listo{background:${C.doneBg};color:${C.doneText}}
-.bf-pt-canal{font-size:10.5px;color:${C.textFaint};border:1px solid ${C.border};
-  border-radius:4px;padding:1px 6px}
-.bf-pt-edad{margin-left:auto;font-size:11.5px;color:${C.textFaint};
-  font-variant-numeric:tabular-nums}
-.bf-pt-fila-desc{font-size:13.5px;color:${C.text};line-height:1.45;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.bf-pt-fila-pie{font-size:11.5px;color:${C.textMuted}}
+/* Vincular WhatsApp */
+.bf-pt-instr{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
+.bf-pt-instr li{display:flex;gap:12px;align-items:flex-start;font-size:15px;line-height:1.45}
+.bf-pt-instr-n{width:28px;height:28px;border-radius:14px;background:${C.azulDark};color:#fff;font-size:14px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:-3px}
+.bf-pt-codigo{border:1.5px dashed ${C.azulLight};border-radius:18px;padding:18px 16px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:10px;background:${C.surfaceAlt};min-height:150px;text-align:center}
+.bf-pt-codigo-tit{font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#566F6D}
+.bf-pt-codigo-msg{display:flex;align-items:center;gap:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700}
+.bf-pt-codigo-pre{font-size:20px;color:#566F6D}
+.bf-pt-codigo-letras{display:flex;gap:6px}
+.bf-pt-codigo-letras span{width:40px;height:50px;border-radius:10px;background:#fff;border:1.5px solid ${C.borderStrong};
+  font-size:26px;color:${C.azulDark};display:flex;align-items:center;justify-content:center}
+.bf-pt-codigo-vence{display:flex;align-items:center;gap:6px;font-size:13px;color:#566F6D;font-variant-numeric:tabular-nums}
+.bf-pt-wa{display:flex;align-items:center;justify-content:center;gap:10px;height:56px;border-radius:16px;background:#1A7F4E;
+  color:#fff;font-size:16px;font-weight:700;text-decoration:none}
+.bf-pt-wa:hover{background:#156B41}
+.bf-pt-sinabrir{border-top:1px solid ${C.border};padding-top:14px}
+.bf-pt-sinabrir summary{font-size:14px;font-weight:700;color:${C.azulDark};cursor:pointer;min-height:32px}
+.bf-pt-sinabrir p{margin:10px 0 0;font-size:14px;line-height:1.5}
+.bf-pt-vinc-pie{margin-top:auto;display:flex;justify-content:space-between;align-items:center}
+.bf-pt-texto{height:44px;padding:0 4px;border:none;background:transparent;font-size:14px;font-weight:700;color:#B9531F}
+.bf-pt-texto.gris{color:#566F6D}
 
-.bf-pt-sep{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
-  color:${C.textFaint};padding-top:6px}
-.bf-pt-vacio{margin:0;font-size:13px;color:${C.textMuted};line-height:1.6}
-.bf-pt-hint{margin:0;font-size:12px;color:${C.textMuted};line-height:1.55;max-width:60ch}
-.bf-pt-hint code{background:${C.bg};border:1px solid ${C.border};border-radius:5px;
-  padding:1px 6px;font-size:12px;font-weight:600;color:${C.text}}
-.bf-pt-link{background:none;border:none;padding:0;color:${C.azulDark};font-size:12.5px;
-  cursor:pointer;text-decoration:underline;font-family:inherit}
-.bf-pt-link:hover{color:${C.naranja}}
-.bf-pt-ok{font-size:12px;color:${C.doneText};font-weight:600}
+/* Mis tickets */
+.bf-pt-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:4px;border-radius:14px;background:${C.border}}
+.bf-pt-tab{height:40px;border:none;border-radius:11px;background:transparent;color:#4A6361;font-size:14px;font-weight:600}
+.bf-pt-tab[aria-selected="true"]{background:#fff;color:${C.azulDark};font-weight:700;box-shadow:0 1px 3px rgba(21,62,62,.12)}
+.bf-pt-lista{display:flex;flex-direction:column;gap:12px}
+.bf-pt-fila{display:flex;flex-direction:column;gap:10px;width:100%;padding:14px;border-radius:16px;background:#fff;
+  border:1px solid ${C.border};text-align:left;color:${C.text};transition:border-color .15s}
+.bf-pt-fila:hover{border-color:${C.borderStrong}}
+.bf-pt-fila.es-tuya{border:1.5px solid #EBCB97}
+.bf-pt-fila-top{display:flex;align-items:center;gap:8px}
+.bf-pt-folio{font-size:14px;font-weight:800;color:${C.azulDark}}
+.bf-pt-edad{margin-left:auto;font-size:13px;color:#566F6D;white-space:nowrap}
+.bf-pt-fila-desc{font-size:15px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bf-pt-fila-pie{display:flex;align-items:center;gap:8px;font-size:13px;color:#566F6D}
+.bf-pt-fila-pie strong{color:${C.text}}
+.bf-pt-fila.es-tuya .bf-pt-fila-pie{font-size:14px;font-weight:700;color:#8A5A0F}
+.bf-pt-canal{margin-left:auto;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:8px;background:${C.bg};color:#566F6D;white-space:nowrap}
+.bf-pt-estado{font-size:12px;font-weight:700;padding:3px 9px;border-radius:10px;white-space:nowrap}
+.bf-pt-estado.t-espera{background:${C.bg};color:#566F6D}
+.bf-pt-estado.t-activo{background:#E3EFEE;color:#2E6E69}
+.bf-pt-estado.t-tuyo{background:#FBF1E1;color:#8A5A0F}
+.bf-pt-estado.t-listo{background:#2E6E69;color:#fff}
+.bf-pt-vacio{margin:0;padding:24px 8px;text-align:center;font-size:14px;line-height:1.5;color:#566F6D}
+.bf-pt-vinc-mini{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border-radius:14px;background:#fff;
+  border:1px dashed ${C.azulLight};color:${C.azulDark};text-align:left;font-size:14px;line-height:1.35}
+.bf-pt-vinc-mini > span{flex:1}
+.bf-pt-vinc-mini small{display:block;font-size:14px;color:#566F6D}
+.bf-pt-pie-fijo{position:fixed;left:50%;bottom:0;z-index:10;width:100%;max-width:560px;transform:translateX(-50%);
+  padding:12px 16px calc(16px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid ${C.border}}
 
 /* Detalle */
-.bf-pt-detalle-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.bf-pt-detalle-estado{display:flex;flex-direction:column;gap:7px;align-items:flex-start;
-  padding:14px 16px;background:${C.surfaceAlt};border-radius:10px}
-.bf-pt-detalle-estado p{margin:0;font-size:13px;color:${C.text}}
-.bf-pt-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
-  gap:12px;margin:0}
-.bf-pt-meta div{display:flex;flex-direction:column;gap:2px}
-.bf-pt-meta dt{font-size:10.5px;font-weight:700;letter-spacing:.07em;
-  text-transform:uppercase;color:${C.textFaint}}
-.bf-pt-meta dd{margin:0;font-size:13px;color:${C.text}}
-.bf-pt-chat{display:flex;flex-direction:column;gap:9px;max-height:360px;overflow-y:auto;
-  padding-right:4px}
-.bf-pt-msg{max-width:85%;padding:10px 13px;border-radius:12px;font-size:13px;
-  line-height:1.5;white-space:pre-wrap;word-break:break-word}
-.bf-pt-msg.mio{align-self:flex-end;background:rgba(133,182,196,0.20);
-  border-bottom-right-radius:3px}
-.bf-pt-msg.ti{align-self:flex-start;background:${C.surfaceAlt};
-  border:1px solid ${C.border};border-bottom-left-radius:3px}
+.bf-pt-detalle-estado{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.bf-pt-detalle-estado p{margin:0;font-size:15px;line-height:1.45}
+.bf-pt-meta{margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:14px;border-radius:14px;background:${C.bg}}
+.bf-pt-meta dt{font-size:12px;font-weight:700;color:#566F6D;text-transform:uppercase;letter-spacing:.4px}
+.bf-pt-meta dd{margin:2px 0 0;font-size:14px;font-weight:600}
+.bf-pt-sep{font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#566F6D}
+.bf-pt-chat{display:flex;flex-direction:column;gap:8px}
+.bf-pt-msg{max-width:85%;padding:10px 12px;border-radius:14px;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+.bf-pt-msg.mio{align-self:flex-end;background:rgba(133,182,196,0.22);border-bottom-right-radius:4px}
+.bf-pt-msg.ti{align-self:flex-start;background:${C.bg};border-bottom-left-radius:4px}
 .bf-pt-responder{display:flex;flex-direction:column;gap:10px}
-.bf-pt-responder-pie{display:flex;align-items:center;gap:14px}
-
-@media (max-width:900px){
-  .bf-pt-main{grid-template-columns:1fr;padding:16px}
-  .bf-pt-head{padding:14px 16px}
-  .bf-pt-alerta{padding:12px 16px}
-  .bf-pt-vinc{margin:16px 16px 0;flex-direction:column;align-items:flex-start}
-  .bf-pt-card{padding:18px 16px}
-}
+.bf-pt-ok{font-size:13.5px;font-weight:600;color:#2E6E69;text-align:center}
 
 `;
 

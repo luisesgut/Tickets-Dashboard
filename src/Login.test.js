@@ -31,8 +31,8 @@ afterEach(() => { delete global.__debeCambiar; });
 
 const entrar = () => {
   render(<App />);
-  fireEvent.change(screen.getByPlaceholderText("Usuario"), { target: { value: "LOrtiz " } });
-  fireEvent.change(screen.getByPlaceholderText("Contraseña"), { target: { value: "vieja" } });
+  fireEvent.change(screen.getByLabelText("Usuario"), { target: { value: "LOrtiz " } });
+  fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: "vieja" } });
   fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
 };
 
@@ -46,9 +46,11 @@ test("se entra con usuario y contraseña, no con correo", async () => {
 
 test("al salir, el formulario queda vacío para el siguiente", async () => {
   entrar();
+  // "Salir" vive en Mis tickets
+  fireEvent.click(await screen.findByRole("button", { name: /Mis tickets/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Salir" }));
-  expect(await screen.findByPlaceholderText("Usuario")).toHaveValue("");
-  expect(screen.getByPlaceholderText("Contraseña")).toHaveValue("");
+  expect(await screen.findByLabelText("Usuario")).toHaveValue("");
+  expect(screen.getByLabelText("Contraseña")).toHaveValue("");
 });
 
 test("con la contraseña del sistema anterior, pide cambiarla antes de entrar", async () => {
@@ -90,4 +92,21 @@ test("muestra el error del servidor si la contraseña actual es incorrecta", asy
   fireEvent.click(screen.getByRole("button", { name: /Guardar y continuar/ }));
 
   expect(await screen.findByText("La contraseña actual no es correcta")).toBeInTheDocument();
+});
+
+test("las cuentas vienen de la mesa anterior: no hay alta, se pide a TI", () => {
+  render(<App />);
+  expect(screen.getByText(/mismo usuario y contraseña/)).toBeInTheDocument();
+  expect(screen.queryByText(/Crear cuenta/i)).toBeNull();
+  expect(screen.getByText("Contáctanos")).toBeInTheDocument();
+});
+
+test("el ojo deja ver la contraseña antes de entrar", () => {
+  render(<App />);
+  const pass = screen.getByLabelText("Contraseña");
+  expect(pass).toHaveAttribute("type", "password");
+  fireEvent.click(screen.getByRole("button", { name: "Mostrar contraseña" }));
+  expect(pass).toHaveAttribute("type", "text");
+  fireEvent.click(screen.getByRole("button", { name: "Ocultar contraseña" }));
+  expect(pass).toHaveAttribute("type", "password");
 });

@@ -1,9 +1,11 @@
-import { render, screen, within, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, within, waitFor, fireEvent, act } from "@testing-library/react";
 import App from "./App";
 
 /* El portal del usuario final: lo que ve un administrativo.
-   Lo que se prueba aquí es el contrato que lo separa del dashboard de TI —
-   que con rol "usuario" no aparezca la cola de trabajo por ningún lado. */
+   Se recorre como en el celular, una pantalla a la vez:
+   tema → detalles → enviado → vincular, más "Mis tickets" y el detalle.
+   Lo que no cambia es el contrato que lo separa del dashboard de TI —
+   con rol "usuario" la cola de trabajo no aparece por ningún lado. */
 
 const hace = (min) => new Date(Date.now() - min * 60000).toISOString();
 
@@ -28,6 +30,11 @@ const T_ESPERA = {
   preview: "Bot: ¿El error sale también desde tu celular?",
   fecha: "12/10/2026 09:15", fecha_iso: hace(130),
   fecha_cierre: null, fecha_cierre_iso: null,
+};
+
+const T_PROCESO = {
+  ...T_ESPERA, id: "BFX-0250", estado: "IN_PROGRESS", fecha_iso: hace(20),
+  descripcion: "La impresora del piso 2 saca las hojas rayadas",
 };
 
 const T_RESUELTO = {
@@ -77,31 +84,40 @@ beforeEach(() => {
   localStorage.setItem("bf_token", "tok");
   localStorage.setItem("bf_nombre", "Laura Ortiz");
   perfilActual = { ...PERFIL };
-  ticketsActuales = [T_ESPERA, T_RESUELTO];
+  ticketsActuales = [T_ESPERA, T_PROCESO, T_RESUELTO];
   creados = [];
   mensajesEnviados = [];
   vinculacionesPedidas = 0;
   global.fetch = mockFetch();
 });
-afterEach(() => { localStorage.clear(); jest.restoreAllMocks(); });
+afterEach(() => { localStorage.clear(); jest.restoreAllMocks(); jest.useRealTimers(); });
 
 const portal = () => document.querySelector(".bf-portal");
+const inicio = async () => {
+  render(<App />);
+  await screen.findByRole("heading", { name: /Qué está fallando/ });
+  // Espera a que lleguen perfil y tickets, no solo el armazón
+  await waitFor(() => expect(screen.getByRole("button", { name: /Mis tickets/ })).toHaveTextContent("2"));
+};
+const aMisTickets = async () => {
+  fireEvent.click(screen.getByRole("button", { name: /Mis tickets/ }));
+  await screen.findByRole("heading", { name: "Mis tickets" });
+};
+const elegir = (tema) => fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${tema}`) }));
+const detalles = () => screen.getByLabelText("Detalles");
+const enviar = () => screen.getByRole("button", { name: "Enviar a TI" });
 
 test("con rol de usuario se pinta el portal, nunca la cola de TI", async () => {
-  render(<App />);
-  await waitFor(() => expect(portal()).toBeInTheDocument());
+  await inicio();
 
-  // Lo que el administrativo SÍ ve
-  expect(screen.getByText("¿En qué podemos ayudarte?")).toBeInTheDocument();
-  expect(screen.getByText("Mis tickets")).toBeInTheDocument();
-  expect(screen.getByText("Laura Ortiz")).toBeInTheDocument();
-  expect(screen.getByText("Contabilidad")).toBeInTheDocument();
+  // Lo que el administrativo SÍ ve: el paso 1, con su nombre
+  expect(screen.getByRole("heading", { name: "¿Qué está fallando, Laura?" })).toBeInTheDocument();
+  expect(screen.getByText("Paso 1 de 2")).toBeInTheDocument();
 
   // Y lo que NO debe ver por ningún lado: la cola de trabajo de TI
   expect(document.querySelector(".bf-sidebar")).toBeNull();
   expect(document.querySelector(".bf-cola")).toBeNull();
   expect(screen.queryByText("Sin atender")).toBeNull();
-  expect(screen.queryByText(/Guías/)).toBeNull();
   expect(screen.queryByText(/Configuración/)).toBeNull();
 
   // El portal no debe tocar los endpoints de TI. Se descartan las rutas /mi/*,
@@ -112,190 +128,221 @@ test("con rol de usuario se pinta el portal, nunca la cola de TI", async () => {
   expect(deTI.some((u) => u.includes("/tickets"))).toBe(false);
   expect(deTI.some((u) => u.includes("/stats"))).toBe(false);
   expect(deTI.some((u) => u.includes("/agentes"))).toBe(false);
-  expect(deTI.some((u) => u.includes("/guias"))).toBe(false);
 });
 
-test("avisa arriba cuando TI está esperando respuesta del usuario", async () => {
-  render(<App />);
-  await waitFor(() => expect(document.querySelector(".bf-pt-alerta")).toBeInTheDocument());
+test("los temas son los de la gente, y cada uno manda la categoría del backend", async () => {
+  await inicio();
+  for (const t of ["Accesos", "Red", "Impresora", "Mi equipo", "Programas", "No sé / otro"]) {
+    expect(screen.getByRole("button", { name: new RegExp(`^${t}`) })).toBeInTheDocument();
+  }
 
-  const alerta = document.querySelector(".bf-pt-alerta");
-  expect(alerta).toBeInTheDocument();
-  expect(alerta).toHaveTextContent("TI te preguntó algo");
-  expect(within(alerta).getByText("BFX-0247")).toBeInTheDocument();
-});
-
-test("la lista dice quién lo atiende y traduce el estado a lenguaje de usuario", async () => {
-  render(<App />);
-  await waitFor(() => expect(document.querySelector(".bf-pt-fila")).toBeInTheDocument());
-
-  const filas = [...document.querySelectorAll(".bf-pt-fila")];
-  const espera = filas.find((f) => f.textContent.includes("BFX-0247"));
-
-  // "WAITING_FOR_USER" no se le muestra nunca al usuario
-  expect(espera).toHaveTextContent("Te preguntaron");
-  expect(espera).not.toHaveTextContent("WAITING_FOR_USER");
-  // El nombre del técnico, no su id: es lo que evita el "¿cómo va mi ticket?"
-  expect(espera).toHaveTextContent("Carlos Méndez lo está atendiendo");
-  expect(espera).not.toHaveTextContent("ag_carlos");
-
-  // Los cerrados se separan de los abiertos
-  expect(screen.getByText("Cerrados")).toBeInTheDocument();
-  const resuelto = filas.find((f) => f.textContent.includes("BFX-0198"));
-  expect(resuelto).toHaveTextContent("Resuelto");
-  expect(resuelto).toHaveTextContent("WhatsApp");  // el canal de origen se ve
-});
-
-test("un solo campo obligatorio: el botón espera la descripción", async () => {
-  render(<App />);
-  await waitFor(() => expect(portal()).toBeInTheDocument());
-
-  const enviar = screen.getByRole("button", { name: "Enviar" });
-  expect(enviar).toBeDisabled();
-
-  const texto = document.querySelector(".bf-pt-textarea");
-  fireEvent.change(texto, { target: { value: "corto" } });
-  expect(enviar).toBeDisabled();
-
-  fireEvent.change(texto, {
-    target: { value: "No puedo entrar al correo, dice contrasena incorrecta" },
-  });
-  expect(enviar).not.toBeDisabled();
-});
-
-test("levantar un ticket manda solo lo que se llenó y confirma con el folio", async () => {
-  render(<App />);
-  await waitFor(() => expect(portal()).toBeInTheDocument());
-
-  fireEvent.change(document.querySelector(".bf-pt-textarea"), {
-    target: { value: "No puedo entrar al correo, dice contrasena incorrecta" },
-  });
-  fireEvent.click(screen.getByText("🔑 Accesos"));
-  fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+  elegir("Mi equipo");
+  expect(screen.getByText("Paso 2 de 2")).toBeInTheDocument();
+  fireEvent.change(detalles(), { target: { value: "La computadora no prende desde la mañana" } });
+  fireEvent.click(enviar());
 
   await waitFor(() => expect(creados.length).toBe(1));
   expect(creados[0]).toEqual({
-    descripcion: "No puedo entrar al correo, dice contrasena incorrecta",
+    descripcion: "La computadora no prende desde la mañana",
+    categoria: "💻 Hardware",
+  });
+});
+
+test("avisa en el inicio cuando TI está esperando respuesta, y lleva al ticket", async () => {
+  await inicio();
+  const alerta = document.querySelector(".bf-pt-alerta");
+  expect(alerta).toHaveTextContent("TI te preguntó algo en BFX-0247");
+
+  fireEvent.click(alerta);
+  await waitFor(() => expect(document.querySelector(".bf-pt-chat")).toBeInTheDocument());
+  expect(screen.getByLabelText("TI está esperando tu respuesta")).toBeInTheDocument();
+});
+
+test("un solo campo obligatorio: el botón espera la descripción", async () => {
+  await inicio();
+  elegir("Accesos");
+
+  expect(enviar()).toBeDisabled();
+  fireEvent.change(detalles(), { target: { value: "corto" } });
+  expect(enviar()).toBeDisabled();
+  fireEvent.change(detalles(), {
+    target: { value: "No puedo entrar al correo, dice contrasena incorrecta" },
+  });
+  expect(enviar()).not.toBeDisabled();
+});
+
+test("las sugerencias escriben por la persona y el folio se confirma en grande", async () => {
+  await inicio();
+  elegir("Accesos");
+
+  const sug = screen.getByRole("button", { name: "Olvidé mi contraseña" });
+  fireEvent.click(sug);
+  expect(sug).toHaveAttribute("aria-pressed", "true");
+  fireEvent.change(detalles(), { target: { value: detalles().value + "Es la de SISPRO." } });
+  fireEvent.click(enviar());
+
+  await waitFor(() => expect(creados.length).toBe(1));
+  expect(creados[0]).toEqual({
+    descripcion: "Olvidé mi contraseña. Es la de SISPRO.",
     categoria: "🔑 Accesos",
   });
 
   // La confirmación da el folio, que es lo que el usuario puede citar
-  await waitFor(() => expect(screen.getByText("BFX-0301")).toBeInTheDocument());
-  expect(screen.getByText(/ya lo registramos/i)).toBeInTheDocument();
+  expect(await screen.findByText("BFX-0301")).toBeInTheDocument();
+  expect(screen.getByText(/Ya lo registramos/)).toBeInTheDocument();
+  expect(screen.getByText("También te lo mandamos a tu correo.")).toBeInTheDocument();
 });
 
-test("sin categoría elegida, el campo no viaja y lo deduce el backend", async () => {
-  render(<App />);
-  await waitFor(() => expect(portal()).toBeInTheDocument());
-
-  fireEvent.change(document.querySelector(".bf-pt-textarea"), {
-    target: { value: "La impresora del piso 2 saca las hojas rayadas" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+test("con «No sé / otro», la categoría no viaja y la deduce el backend", async () => {
+  await inicio();
+  elegir("No sé / otro");
+  fireEvent.change(detalles(), { target: { value: "La pantalla parpadea cuando abro la cámara" } });
+  fireEvent.click(enviar());
 
   await waitFor(() => expect(creados.length).toBe(1));
   expect(creados[0].categoria).toBeUndefined();
 });
 
-test("el detalle muestra la conversación y deja responder a TI", async () => {
-  render(<App />);
-  await waitFor(() => expect(document.querySelector(".bf-pt-fila")).toBeInTheDocument());
+test("«cambiar» regresa al paso 1 sin perder lo escrito", async () => {
+  await inicio();
+  elegir("Red");
+  fireEvent.change(detalles(), { target: { value: "No tengo internet desde las 9" } });
+  fireEvent.click(screen.getByRole("button", { name: /Red · cambiar/ }));
+  elegir("Impresora");
+  expect(detalles()).toHaveValue("No tengo internet desde las 9");
+});
 
-  const fila = [...document.querySelectorAll(".bf-pt-fila")]
-    .find((f) => f.textContent.includes("BFX-0247"));
-  fireEvent.click(fila);
+test("Mis tickets: lo que espera tu respuesta va primero, y el estado en lenguaje de usuario", async () => {
+  await inicio();
+  await aMisTickets();
+
+  expect(screen.getByText("Laura Ortiz · Contabilidad")).toBeInTheDocument();
+  const filas = [...document.querySelectorAll(".bf-pt-fila")];
+  expect(filas.map((f) => f.querySelector(".bf-pt-folio").textContent)).toEqual(["BFX-0247", "BFX-0250"]);
+
+  // "WAITING_FOR_USER" no se le muestra nunca al usuario
+  expect(filas[0]).toHaveTextContent("Te preguntaron");
+  expect(filas[0]).not.toHaveTextContent("WAITING_FOR_USER");
+  expect(filas[0]).toHaveTextContent("Carlos necesita tu respuesta para seguir");
+  // El nombre del técnico, no su id: es lo que evita el "¿cómo va mi ticket?"
+  expect(filas[1]).toHaveTextContent("Carlos Méndez lo está atendiendo");
+  expect(filas[1]).not.toHaveTextContent("ag_carlos");
+  expect(filas[1].querySelector(".bf-pt-avance")).toHaveAttribute("aria-label", "Avance: En proceso");
+
+  // Los resueltos van en su pestaña, con el canal de origen a la vista
+  fireEvent.click(screen.getByRole("tab", { name: /Resueltos · 1/ }));
+  const resuelto = document.querySelector(".bf-pt-fila");
+  expect(resuelto).toHaveTextContent("BFX-0198");
+  expect(resuelto).toHaveTextContent("Resuelto");
+  expect(resuelto).toHaveTextContent("WhatsApp");
+});
+
+test("el detalle muestra la conversación y deja responder a TI", async () => {
+  await inicio();
+  await aMisTickets();
+  fireEvent.click(screen.getByText("BFX-0247").closest("button"));
   await waitFor(() => expect(document.querySelector(".bf-pt-chat")).toBeInTheDocument());
 
   expect(screen.getByText(/El error sale también desde tu celular/)).toBeInTheDocument();
   expect(screen.getByText("Carlos Méndez lo está atendiendo.")).toBeInTheDocument();
 
-  const caja = document.querySelector(".bf-pt-responder .bf-pt-textarea");
-  fireEvent.change(caja, { target: { value: "Ya probé desde mi celular y tampoco entra" } });
-  fireEvent.click(screen.getByRole("button", { name: "Enviar a TI" }));
-
+  fireEvent.change(screen.getByLabelText("TI está esperando tu respuesta"), {
+    target: { value: "Ya probé desde mi celular y tampoco entra" },
+  });
+  fireEvent.click(enviar());
   await waitFor(() => expect(mensajesEnviados).toEqual([
     "Ya probé desde mi celular y tampoco entra",
   ]));
 });
 
 test("un ticket cerrado no se puede responder", async () => {
-  render(<App />);
-  await waitFor(() => expect(document.querySelector(".bf-pt-fila")).toBeInTheDocument());
-
-  fireEvent.click([...document.querySelectorAll(".bf-pt-fila")]
-    .find((f) => f.textContent.includes("BFX-0198")));
+  await inicio();
+  await aMisTickets();
+  fireEvent.click(screen.getByRole("tab", { name: /Resueltos/ }));
+  fireEvent.click(screen.getByText("BFX-0198").closest("button"));
   await waitFor(() => expect(document.querySelector(".bf-pt-chat")).toBeInTheDocument());
 
   expect(document.querySelector(".bf-pt-responder")).toBeNull();
   expect(screen.getByText(/ya está cerrado/i)).toBeInTheDocument();
 });
 
-test("la vinculación de WhatsApp es un tap con el mensaje ya escrito", async () => {
-  render(<App />);
-  await waitFor(() => expect(document.querySelector(".bf-pt-vinc")).toBeInTheDocument());
+test("después de enviar se invita a ligar WhatsApp: un tap con el mensaje ya escrito", async () => {
+  await inicio();
+  elegir("Red");
+  fireEvent.change(detalles(), { target: { value: "No tengo internet desde las 9" } });
+  fireEvent.click(enviar());
+  fireEvent.click(await screen.findByRole("button", { name: "Activar avisos por WhatsApp" }));
 
-  expect(screen.getByText("Levanta tickets desde WhatsApp")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Vincular mi WhatsApp" }));
-
+  // El código se pide solo, al entrar a la pantalla
   await waitFor(() => expect(vinculacionesPedidas).toBe(1));
-  const link = await screen.findByText("Abrir WhatsApp y enviar");
+  const link = await screen.findByRole("link", { name: "Abrir WhatsApp y enviar" });
   expect(link).toHaveAttribute("href", "https://wa.me/524771234567?text=VINCULAR%20K7M2");
   expect(link).toHaveAttribute("target", "_blank");
-  expect(screen.getByText("VINCULAR K7M2")).toBeInTheDocument();
+  expect(screen.getByLabelText("VINCULAR K7M2")).toBeInTheDocument();
+  expect(screen.getByText(/Vence en 1[45]:\d\d/)).toBeInTheDocument();
+  // Plan B si WhatsApp no se abre: el número del bot, legible
+  expect(screen.getByText("+52 477 123 4567")).toBeInTheDocument();
 });
 
-test("con el WhatsApp ya vinculado, la invitación desaparece", async () => {
+test("en cuanto el bot canjea el código, la pantalla de vincular lo celebra sola", async () => {
+  await inicio();
+  await aMisTickets();
+  fireEvent.click(screen.getByRole("button", { name: /Activa avisos por WhatsApp/ }));
+  await screen.findByRole("link", { name: "Abrir WhatsApp y enviar" });
+
+  // El usuario manda el mensaje en WhatsApp y vuelve a la pestaña
   perfilActual = { ...PERFIL, whatsapp: "5214771112222", whatsapp_vinculado: true };
-  render(<App />);
-  await waitFor(() => expect(portal()).toBeInTheDocument());
-  await waitFor(() => expect(screen.getByText("Mis tickets")).toBeInTheDocument());
-
-  expect(document.querySelector(".bf-pt-vinc")).toBeNull();
+  await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+  expect(await screen.findByRole("heading", { name: "Tu WhatsApp quedó ligado" })).toBeInTheDocument();
 });
 
-test("sin tickets, el portal explica para qué sirve en vez de quedarse vacío", async () => {
+test("con el WhatsApp ya vinculado, no se invita a ligarlo", async () => {
+  perfilActual = { ...PERFIL, whatsapp: "5214771112222", whatsapp_vinculado: true };
+  await inicio();
+  await aMisTickets();
+  expect(screen.queryByText(/Activa avisos por WhatsApp/)).toBeNull();
+});
+
+test("sin tickets, Mis tickets explica para qué sirve en vez de quedarse vacío", async () => {
   ticketsActuales = [];
   render(<App />);
-  await waitFor(() => expect(portal()).toBeInTheDocument());
-
-  await waitFor(() =>
-    expect(screen.getByText(/Todavía no has levantado ningún ticket/)).toBeInTheDocument());
+  await screen.findByRole("heading", { name: /Qué está fallando/ });
   expect(document.querySelector(".bf-pt-alerta")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /Mis tickets/ }));
+  expect(await screen.findByText(/Todavía no has levantado ningún ticket/)).toBeInTheDocument();
+  expect(within(portal()).getByRole("button", { name: /Nuevo ticket/ })).toBeInTheDocument();
 });
 
 test("sin área en el perfil, el portal la pide antes de dejar enviar", async () => {
   // Mismo criterio que en WhatsApp: ningún ticket llega a TI sin saber de dónde
   // viene. Quien ya tiene área en su perfil no la vuelve a escribir.
   perfilActual = { ...PERFIL, area: null };
-  render(<App />);
-  await waitFor(() => expect(portal()).toBeInTheDocument());
-  await waitFor(() => expect(screen.getByLabelText("¿De qué área eres?")).toBeInTheDocument());
+  await inicio();
+  elegir("Accesos");
 
-  const enviar = screen.getByRole("button", { name: "Enviar" });
-  fireEvent.change(document.querySelector(".bf-pt-textarea"), {
+  fireEvent.change(detalles(), {
     target: { value: "No puedo entrar al correo, dice contrasena incorrecta" },
   });
-  expect(enviar).toBeDisabled();            // falta el área
+  expect(enviar()).toBeDisabled();            // falta el área
 
   fireEvent.change(screen.getByLabelText("¿De qué área eres?"), {
     target: { value: "Recursos Humanos" },
   });
-  expect(enviar).not.toBeDisabled();
+  expect(enviar()).not.toBeDisabled();
 
-  fireEvent.click(enviar);
+  fireEvent.click(enviar());
   await waitFor(() => expect(creados.length).toBe(1));
   expect(creados[0].area).toBe("Recursos Humanos");
 });
 
 test("con área en el perfil, no se vuelve a preguntar", async () => {
-  render(<App />);   // PERFIL trae area: "Contabilidad"
-  await waitFor(() => expect(portal()).toBeInTheDocument());
+  await inicio();   // PERFIL trae area: "Contabilidad"
+  elegir("Impresora");
   expect(screen.queryByLabelText("¿De qué área eres?")).toBeNull();
 
-  fireEvent.change(document.querySelector(".bf-pt-textarea"), {
-    target: { value: "La impresora del piso 2 saca hojas rayadas" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+  fireEvent.change(detalles(), { target: { value: "La impresora del piso 2 saca hojas rayadas" } });
+  fireEvent.click(enviar());
   await waitFor(() => expect(creados.length).toBe(1));
   expect(creados[0].area).toBeUndefined();   // el backend la toma del perfil
 });
