@@ -494,7 +494,7 @@ function App() {
   );
 
   // ── Estado del dashboard ─────────────────────────────────────
-  const [vista, setVista] = useState("tickets"); // "tickets" | "config"
+  const [vista, setVista] = useState("tickets"); // "tickets" | "cuentas" | "config"
   const [tickets, setTickets] = useState({});
   const [agentes, setAgentes] = useState({});
   const [selectedId, setSelectedId] = useState(null);
@@ -1209,6 +1209,14 @@ function App() {
         </div>
 
         <div className="bf-side-links">
+          {perfil?.rol === "admin" && (
+            <button
+              className={`bf-side-link${vista === "cuentas" ? " is-active" : ""}`}
+              onClick={() => setVista("cuentas")}
+            >
+              <IcUser size={15} /> Cuentas
+            </button>
+          )}
           <button
             className={`bf-side-link${vista === "config" ? " is-active" : ""}`}
             onClick={() => setVista("config")}
@@ -1233,11 +1241,14 @@ function App() {
           <div>
             <h1 className="bf-title">
               {vista === "config" ? "Configuración"
+                : vista === "cuentas" ? "Cuentas"
                 : (TITULOS[filtro] || "Cola de trabajo")}
             </h1>
             <p className="bf-subtitle">
               {vista === "config"
                 ? "Agentes de soporte y whitelist de usuarios"
+                : vista === "cuentas"
+                ? "Quién entra al portal, con qué área y qué rol"
                 : masViejoSinAtender ? (
                     <>
                       {gruposVisibles.sin_atender.length}{" "}
@@ -1263,15 +1274,17 @@ function App() {
                 />
               </div>
             )}
-            <button className="bf-sync" onClick={fetchData} disabled={syncing}>
+            {vista !== "cuentas" && <button className="bf-sync" onClick={fetchData} disabled={syncing}>
               <IcRefresh size={16} className={syncing ? "bf-spin" : ""} />
               {syncing ? "Sincronizando" : "Sincronizar"}
-            </button>
+            </button>}
           </div>
         </header>
 
         {/* Workspace */}
-        {vista === "config" ? (
+        {vista === "cuentas" && perfil?.rol === "admin" ? (
+          <GestorCuentas miUsuario={perfil?.usuario} />
+        ) : vista === "config" ? (
           <GestorConfig
             agentes={configAgentes}
             usuarios={configUsuarios}
@@ -2126,6 +2139,320 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
 /* ──────────────────────────────────────────────────────────────
    Estilos
    ────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────
+   CUENTAS (solo admin): las personas del sistema y el catálogo de áreas
+   ────────────────────────────────────────────────────────────── */
+
+const ROL_UI = { usuario: "Usuario", tecnico: "Técnico", admin: "Admin" };
+
+// Se carga sola, como el portal: solo la abre un admin y no tiene nada que ver
+// con el polling de la cola. Desactivar en vez de borrar: los tickets de esa
+// persona se quedan. El backend valida todo (área del catálogo, WhatsApp libre).
+function GestorCuentas({ miUsuario }) {
+  const [personas, setPersonas] = useState([]);
+  const [areas, setAreas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [busca, setBusca] = useState("");
+  const [estado, setEstado] = useState("activas");   // activas | desactivadas | todas
+  const [rolFiltro, setRolFiltro] = useState("");
+  const [editId, setEditId] = useState(null);         // id de la cuenta | "nueva"
+  const [campos, setCampos] = useState({});
+  const [error, setError] = useState("");
+
+  const [creandoArea, setCreandoArea] = useState(false);
+  const [nuevaArea, setNuevaArea] = useState("");
+  const [editAreaId, setEditAreaId] = useState(null);
+  const [editAreaNombre, setEditAreaNombre] = useState("");
+  const [errorArea, setErrorArea] = useState("");
+
+  const api = async (ruta, opts = {}) => {
+    const r = await fetch(`${API}${ruta}`, {
+      ...opts,
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("bf_token")}`,
+        ...(opts.body ? { "Content-Type": "application/json" } : {}),
+      },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || "No se pudo guardar.");
+    return data;
+  };
+
+  const cargar = async () => {
+    try {
+      const [p, a] = await Promise.all([api("/personas"), api("/areas-cuenta?todas=true")]);
+      setPersonas(p.personas || []);
+      setAreas(a.areas || []);
+    } catch (e) { console.error("Error al cargar cuentas", e); }
+    finally { setCargando(false); }
+  };
+  useEffect(() => { cargar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cuántas cuentas activas tiene cada área (por nombre, sin mayúsculas)
+  const porArea = useMemo(() => {
+    const n = {};
+    personas.forEach((p) => {
+      if (p.activo && p.area) n[p.area.toLowerCase()] = (n[p.area.toLowerCase()] || 0) + 1;
+    });
+    return n;
+  }, [personas]);
+
+  const q = busca.trim().toLowerCase();
+  const visibles = personas.filter((p) =>
+    (estado === "todas" || (estado === "activas") === p.activo) &&
+    (!rolFiltro || p.rol === rolFiltro) &&
+    (!q || [p.nombre, p.usuario, p.email, p.area, p.whatsapp]
+      .some((v) => String(v || "").toLowerCase().includes(q))));
+  const nActivas = personas.filter((p) => p.activo).length;
+
+  const abrir = (p) => {
+    setError("");
+    setEditId(p.id);
+    setCampos({ nombre: p.nombre, email: p.email || "", area: p.area || "",
+                whatsapp: p.whatsapp || "", rol: p.rol, activo: p.activo });
+  };
+  const nueva = () => {
+    setError("");
+    setEditId("nueva");
+    setCampos({ usuario: "", nombre: "", email: "", area: "", whatsapp: "", rol: "usuario", password: "" });
+  };
+  const campo = (k) => (e) => {
+    const v = e.target.type === "checkbox" ? e.target.checked : e.target.value;
+    setCampos((c) => ({ ...c, [k]: v }));
+    setError("");
+  };
+
+  const guardar = async () => {
+    setError("");
+    try {
+      if (editId === "nueva") await api("/personas", { method: "POST", body: JSON.stringify(campos) });
+      else await api(`/personas/${editId}`, { method: "PATCH", body: JSON.stringify(campos) });
+      setEditId(null);
+      await cargar();
+    } catch (e) { setError(e.message); }
+  };
+
+  const guardarArea = async (id, cambios) => {
+    setErrorArea("");
+    try {
+      if (id) await api(`/areas-cuenta/${id}`, { method: "PATCH", body: JSON.stringify(cambios) });
+      else await api("/areas-cuenta", { method: "POST", body: JSON.stringify(cambios) });
+      setCreandoArea(false); setNuevaArea(""); setEditAreaId(null);
+      await cargar();
+    } catch (e) { setErrorArea(e.message); }
+  };
+
+  // El área que ya trae la cuenta se ofrece aunque esté desactivada en el catálogo
+  const opcionesArea = areas.filter((a) => a.activo || a.nombre === campos.area);
+
+  const formulario = (esNueva) => (
+    <div className="bf-cta-form">
+      {esNueva ? (
+        <label className="bf-cta-campo">
+          <span>Usuario</span>
+          <input className="bf-guia-input" placeholder="ej. jperez" autoCapitalize="none"
+                 value={campos.usuario} onChange={campo("usuario")} />
+        </label>
+      ) : (
+        <span className="bf-cfg-id">{personas.find((p) => p.id === editId)?.usuario}</span>
+      )}
+      <label className="bf-cta-campo">
+        <span>Nombre</span>
+        <input className="bf-guia-input" value={campos.nombre} onChange={campo("nombre")} />
+      </label>
+      <label className="bf-cta-campo">
+        <span>Correo</span>
+        <input className="bf-guia-input" type="email" placeholder="Opcional" value={campos.email} onChange={campo("email")} />
+      </label>
+      <label className="bf-cta-campo">
+        <span>Área</span>
+        <select className="bf-guia-input" value={campos.area} onChange={campo("area")}>
+          <option value="">Sin área</option>
+          {opcionesArea.map((a) => <option key={a.id} value={a.nombre}>{a.nombre}</option>)}
+        </select>
+      </label>
+      <div className="bf-cta-campo">
+        <label htmlFor="bf-cta-wa">WhatsApp</label>
+        <div className="bf-cta-wa">
+          <input id="bf-cta-wa" className="bf-guia-input" inputMode="tel" placeholder="10 dígitos (opcional)"
+                 value={campos.whatsapp} onChange={campo("whatsapp")} />
+          {campos.whatsapp && (
+            <button type="button" className="bf-guia-cancel-btn" onClick={() => setCampos((c) => ({ ...c, whatsapp: "" }))}>
+              Quitar
+            </button>
+          )}
+        </div>
+      </div>
+      <label className="bf-cta-campo">
+        <span>Rol</span>
+        <select className="bf-guia-input" value={campos.rol} onChange={campo("rol")}>
+          {Object.entries(ROL_UI).map(([r, l]) => <option key={r} value={r}>{l}</option>)}
+        </select>
+      </label>
+      {esNueva ? (
+        <div className="bf-cta-campo">
+          <label htmlFor="bf-cta-pass">Contraseña inicial</label>
+          <input id="bf-cta-pass" className="bf-guia-input" value={campos.password} onChange={campo("password")}
+                 placeholder="Mínimo 8 caracteres" aria-describedby="bf-cta-pass-ayuda" />
+          <small id="bf-cta-pass-ayuda">Se la das a la persona; la cambia la primera vez que entra.</small>
+        </div>
+      ) : (
+        <label className="bf-cfg-toggle">
+          <input type="checkbox" checked={campos.activo} onChange={campo("activo")}
+                 disabled={personas.find((p) => p.id === editId)?.usuario === miUsuario} />
+          Cuenta activa
+        </label>
+      )}
+      {error && <p className="bf-guia-err">{error}</p>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <BotonAccion className="bf-guia-save-btn" onClick={guardar} cargandoTexto={esNueva ? "Creando…" : "Guardando…"}>
+          {esNueva ? "Crear cuenta" : "Guardar"}
+        </BotonAccion>
+        <button className="bf-guia-cancel-btn" onClick={() => setEditId(null)}>Cancelar</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="bf-work bf-cta">
+      {/* Cuentas */}
+      <div className="bf-panel" style={{ display: "flex", flexDirection: "column" }}>
+        <div className="bf-panel-head">
+          <IcUser size={16} />
+          <span>Cuentas ({nActivas} activas)</span>
+          <button className="bf-guia-add-btn" onClick={nueva} title="Nueva cuenta" aria-label="Nueva cuenta">
+            <IcPlus size={15} />
+          </button>
+        </div>
+        <div className="bf-cta-filtros">
+          <input className="bf-guia-input" type="search" aria-label="Buscar cuenta"
+                 placeholder="Nombre, usuario, correo, área o WhatsApp…"
+                 value={busca} onChange={(e) => setBusca(e.target.value)} />
+          <select className="bf-guia-input" aria-label="Estado" value={estado} onChange={(e) => setEstado(e.target.value)}>
+            <option value="activas">Activas</option>
+            <option value="desactivadas">Desactivadas</option>
+            <option value="todas">Todas</option>
+          </select>
+          <select className="bf-guia-input" aria-label="Rol" value={rolFiltro} onChange={(e) => setRolFiltro(e.target.value)}>
+            <option value="">Todos los roles</option>
+            {Object.entries(ROL_UI).map(([r, l]) => <option key={r} value={r}>{l}</option>)}
+          </select>
+        </div>
+
+        <div className="bf-list-body bf-scroll">
+          {editId === "nueva" && <div className="bf-cfg-row">{formulario(true)}</div>}
+
+          {cargando ? (
+            [0, 1, 2].map((i) => <div key={i} className="bf-skel" />)
+          ) : visibles.length === 0 ? (
+            <div className="bf-empty">
+              <div className="bf-empty-ic"><IcUser size={28} /></div>
+              <p className="bf-empty-title">Ninguna cuenta coincide</p>
+              <p className="bf-empty-text">Prueba con otro nombre o cambia el filtro.</p>
+            </div>
+          ) : (
+            visibles.map((p) => (
+              <div key={p.id} className={`bf-cfg-row${p.activo ? "" : " is-inactive"}`}>
+                {editId === p.id ? formulario(false) : (
+                  <>
+                    <div className="bf-avatar"
+                         style={{ background: colorPara(String(p.id)), width: 36, height: 36, borderRadius: 10, flexShrink: 0 }}>
+                      {iniciales(p.nombre)}
+                    </div>
+                    <div className="bf-cfg-info">
+                      <span className="bf-cfg-nombre">{p.nombre}</span>
+                      <span className="bf-cfg-sub">
+                        {p.usuario || p.email}{p.area ? ` · ${p.area}` : " · sin área"}
+                      </span>
+                      <span className="bf-cfg-sub">
+                        {p.rol !== "usuario" && <span className="bf-cfg-pill">{ROL_UI[p.rol] || p.rol}</span>}
+                        <span className={`bf-cfg-pill${p.email ? "" : " bf-cfg-pill-off"}`}>{p.email ? "correo" : "sin correo"}</span>
+                        {p.whatsapp && <span className="bf-cfg-pill">WhatsApp</span>}
+                        {!p.activo && <span className="bf-cfg-pill bf-cfg-pill-off">desactivada</span>}
+                      </span>
+                    </div>
+                    <button className="bf-icon-btn" onClick={() => abrir(p)} title="Editar cuenta" aria-label={`Editar ${p.nombre}`}>
+                      <IcSliders size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Catálogo de áreas */}
+      <div className="bf-panel" style={{ display: "flex", flexDirection: "column" }}>
+        <div className="bf-panel-head">
+          <IcSettings size={16} />
+          <span>Áreas ({areas.filter((a) => a.activo).length})</span>
+          <button className="bf-guia-add-btn" onClick={() => { setCreandoArea(true); setErrorArea(""); }}
+                  title="Nueva área" aria-label="Nueva área">
+            <IcPlus size={15} />
+          </button>
+        </div>
+        <div className="bf-list-body bf-scroll">
+          <p className="bf-cta-nota">
+            Las cuentas eligen su área de esta lista. Renombrar un área la cambia en sus
+            cuentas; los tickets ya levantados se quedan como estaban.
+          </p>
+          {creandoArea && (
+            <div className="bf-guia-new-form">
+              <input className="bf-guia-input" aria-label="Nombre del área nueva" placeholder="Ej. Compras"
+                     value={nuevaArea} onChange={(e) => { setNuevaArea(e.target.value); setErrorArea(""); }} />
+              {errorArea && <p className="bf-guia-err">{errorArea}</p>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <BotonAccion className="bf-guia-save-btn" onClick={() => guardarArea(null, { nombre: nuevaArea })}
+                             cargandoTexto="Creando…" disabled={!nuevaArea.trim()}>
+                  Crear área
+                </BotonAccion>
+                <button className="bf-guia-cancel-btn" onClick={() => { setCreandoArea(false); setErrorArea(""); }}>Cancelar</button>
+              </div>
+            </div>
+          )}
+          {areas.map((a) => (
+            <div key={a.id} className={`bf-cfg-row${a.activo ? "" : " is-inactive"}`}>
+              {editAreaId === a.id ? (
+                <div className="bf-cta-form">
+                  <input className="bf-guia-input" aria-label={`Nuevo nombre de ${a.nombre}`} value={editAreaNombre}
+                         onChange={(e) => { setEditAreaNombre(e.target.value); setErrorArea(""); }} />
+                  {errorArea && <p className="bf-guia-err">{errorArea}</p>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <BotonAccion className="bf-guia-save-btn" onClick={() => guardarArea(a.id, { nombre: editAreaNombre })}
+                                 cargandoTexto="Guardando…">
+                      Renombrar
+                    </BotonAccion>
+                    <button className="bf-guia-cancel-btn" onClick={() => setEditAreaId(null)}>Cancelar</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="bf-cfg-info">
+                    <span className="bf-cfg-nombre">{a.nombre}</span>
+                    <span className="bf-cfg-sub">
+                      {porArea[a.nombre.toLowerCase()] || 0} cuenta{porArea[a.nombre.toLowerCase()] === 1 ? "" : "s"}
+                      {!a.activo && <span className="bf-cfg-pill bf-cfg-pill-off">desactivada</span>}
+                    </span>
+                  </div>
+                  <button className="bf-icon-btn" title="Renombrar" aria-label={`Renombrar ${a.nombre}`}
+                          onClick={() => { setEditAreaId(a.id); setEditAreaNombre(a.nombre); setErrorArea(""); }}>
+                    <IcSliders size={14} />
+                  </button>
+                  <BotonAccion className="bf-guia-cancel-btn" cargandoTexto=""
+                               onClick={() => guardarArea(a.id, { activo: !a.activo })}>
+                    {a.activo ? "Desactivar" : "Activar"}
+                  </BotonAccion>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────
    PORTAL DEL USUARIO FINAL
    Lo que ve un administrativo: levantar un ticket y seguirle la
@@ -3399,6 +3726,16 @@ const CSS = `
 .bf-cfg-pill-off{background:${C.border};color:${C.textMuted}}
 .bf-cfg-toggles{display:flex;gap:16px}
 .bf-cfg-toggle{display:flex;align-items:center;gap:6px;font-size:13px;color:${C.textMuted};cursor:pointer}
+.bf-cta{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
+.bf-cta-filtros{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 14px 0}
+.bf-cta-filtros input{grid-column:1 / -1}
+@media (max-width:1080px){.bf-cta{grid-template-columns:minmax(0,1fr)}}
+.bf-cta-form{display:flex;flex-direction:column;gap:10px;flex:1;min-width:0}
+.bf-cta-campo{display:flex;flex-direction:column;gap:4px}
+.bf-cta-campo > span,.bf-cta-campo > label{font-size:12px;font-weight:600;color:${C.textMuted}}
+.bf-cta-campo small{font-size:12px;color:${C.textMuted}}
+.bf-cta-wa{display:flex;gap:8px}
+.bf-cta-nota{font-size:12.5px;line-height:1.5;color:${C.textMuted}}
 .bf-cfg-notice{
   padding:12px 14px;border-radius:10px;background:${C.openBg};border:1px solid rgba(226,163,67,0.3);
   font-size:13px;color:${C.openText};line-height:1.5;margin-bottom:8px;
