@@ -170,3 +170,34 @@ test("un ticket del portal se identifica por correo, no por un '+' vacío", asyn
 
   delete TICKETS["BFX-0050"];
 });
+
+test("en celular, el menú abre la barra lateral y se cierra al elegir una cola", async () => {
+  render(<App />);
+  await waitFor(() => expect(document.querySelector(".bf-fila-id")).toBeInTheDocument());
+
+  // El botón del menú lleva el conteo de «sin atender» (2 en los datos de prueba)
+  const menu = screen.getByLabelText("Abrir menú");
+  expect(menu).toHaveTextContent("2");
+  expect(lateral()).not.toHaveClass("is-abierto");
+
+  fireEvent.click(menu);
+  expect(lateral()).toHaveClass("is-abierto");
+
+  fireEvent.click(within(lateral()).getByText("En progreso"));
+  expect(lateral()).not.toHaveClass("is-abierto");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("En progreso");
+});
+
+test("abrir un ticket marca el área de trabajo para mostrar solo el detalle", async () => {
+  render(<App />);
+  await waitFor(() => expect(document.querySelector(".bf-fila-id")).toBeInTheDocument());
+  const trabajo = document.querySelector(".bf-cola-work");
+  expect(trabajo).not.toHaveClass("con-detalle");
+
+  fireEvent.click(document.querySelector(".bf-fila"));
+  await waitFor(() => expect(trabajo).toHaveClass("con-detalle"));
+  expect(document.querySelector(".bf-main")).toHaveClass("con-detalle");
+
+  fireEvent.click(screen.getByLabelText("Cerrar detalle"));
+  expect(trabajo).not.toHaveClass("con-detalle");
+});

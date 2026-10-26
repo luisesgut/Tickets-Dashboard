@@ -142,6 +142,24 @@ and `GET /stats` is no longer fetched on sync.
 (`miAgenteId`); dashboard users and the `agentes` table are separate, so the match is by
 name and the button simply hides when there is none. `Asignar a…` always works.
 
+### Phone layout (≤ 720 px)
+
+Technicians work the queue from their phones, so the IT dashboard can't hide its
+navigation behind "rotate your phone":
+
+- **The sidebar becomes a drawer.** `.bf-mtop` (sticky top bar, only shown ≤ 720 px) has
+  the ☰ button with the *sin atender* count; `menuAbierto` slides `.bf-sidebar` in over a
+  `.bf-scrim`. Any `button` clicked inside the drawer closes it (one `onClick` on the
+  `<aside>` with `closest("button")`), so new sidebar controls get that for free.
+- **List *or* detail, never stacked** (≤ 1080 px, where the grid is one column):
+  `.bf-cola-work.con-detalle` hides the list, otherwise the detail is hidden. Opening a
+  ticket scrolls to the top; the detail's ✕ goes back. `.bf-main.con-detalle` hides the
+  search/sync header ≤ 720 px. The Configuración view also uses `.bf-work` but not
+  `.bf-cola-work`, so it simply stacks its two panels.
+- `.bf-work` is `minmax(0,1fr)` in one column — plain `1fr` lets the longest nowrap text
+  widen the page past the viewport.
+- The list body drops its fixed `max-height` on phones: the page scrolls, not a box.
+
 ### Sync model (sentinel polling)
 
 `fetchData()` is no longer on a blind 10-second timer. Every `POLL_MS` the app hits

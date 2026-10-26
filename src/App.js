@@ -296,6 +296,9 @@ const IcX = (p) => (
     }
   />
 );
+const IcMenu = (p) => (
+  <Icon {...p} d={<><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></>} />
+);
 const IcSliders = (p) => (
   <Icon
     {...p}
@@ -486,6 +489,7 @@ function App() {
   const [ahora, setAhora] = useState(Date.now());      // hace latir los "hace X"
   const [busqueda, setBusqueda] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [menuAbierto, setMenuAbierto] = useState(false); // barra lateral en celular
 
   // ── Imágenes del ticket seleccionado ─────────────────────────
   const [selectedImagenes, setSelectedImagenes] = useState([]); // [{id, mime_type, analisis, fecha, blobUrl}]
@@ -1117,8 +1121,28 @@ function App() {
     <div className="bf-app">
       <style>{CSS}</style>
 
+      {/* ───── Barra superior (solo celular) ───── */}
+      {/* En pantallas angostas la barra lateral no cabe: se vuelve un cajón que
+          abre este botón, con el conteo de «sin atender» a la vista. */}
+      <div className="bf-mtop">
+        <button className="bf-mtop-menu" onClick={() => setMenuAbierto(true)} aria-label="Abrir menú">
+          <IcMenu size={20} />
+          {cola.porGrupo.sin_atender.length > 0 && (
+            <span className="bf-mtop-n">{cola.porGrupo.sin_atender.length}</span>
+          )}
+        </button>
+        <div className="bf-logo bf-mtop-logo">b</div>
+        <span className="bf-mtop-titulo">Mesa de Soporte TI</span>
+      </div>
+      {menuAbierto && <div className="bf-scrim" onClick={() => setMenuAbierto(false)} />}
+
       {/* ───── Sidebar ───── */}
-      <aside className="bf-sidebar">
+      {/* Cualquier botón del cajón (cola, área, Configuración) es una decisión
+          tomada: se cierra solo para mostrar el resultado. */}
+      <aside
+        className={`bf-sidebar${menuAbierto ? " is-abierto" : ""}`}
+        onClick={(e) => { if (e.target.closest("button")) setMenuAbierto(false); }}
+      >
         <div className="bf-brand">
           <div className="bf-logo">b</div>
           <div>
@@ -1229,7 +1253,7 @@ function App() {
       </aside>
 
       {/* ───── Main ───── */}
-      <main className="bf-main">
+      <main className={`bf-main${vista === "tickets" && ticketSeleccionado ? " con-detalle" : ""}`}>
         {/* Header */}
         <header className="bf-header">
           <div>
@@ -1284,7 +1308,7 @@ function App() {
             onDesactivarUsuario={desactivarUsuario}
           />
         ) : (
-        <section className="bf-work">
+        <section className={`bf-work bf-cola-work${ticketSeleccionado ? " con-detalle" : ""}`}>
           {/* Lista */}
           <div className="bf-panel bf-list">
             <div className="bf-list-body bf-scroll">
@@ -1335,7 +1359,7 @@ function App() {
                               ahora={ahora}
                               seleccionado={selectedId === t.id}
                               miAgenteId={miAgenteId}
-                              onAbrir={() => setSelectedId(t.id)}
+                              onAbrir={() => { setSelectedId(t.id); window.scrollTo(0, 0); }}
                               onAsignar={asignarTicket}
                               onRecordar={enviarMensaje}
                             />
@@ -3073,15 +3097,57 @@ const CSS = `
 .bf-scroll::-webkit-scrollbar-thumb:hover{background:${C.azulLight}}
 
 /* Responsive */
+.bf-mtop,.bf-scrim{display:none}
 @media (max-width:1080px){
-  .bf-work{grid-template-columns:1fr}
+  /* minmax(0,…): sin él, la columna crece con el texto más largo y la página se desborda */
+  .bf-work{grid-template-columns:minmax(0,1fr)}
   .bf-kpis{grid-template-columns:repeat(2,1fr)}
+  /* Una sola columna: lista o detalle, nunca uno debajo del otro */
+  .bf-cola-work.con-detalle .bf-list{display:none}
+  .bf-cola-work:not(.con-detalle) .bf-detail{display:none}
 }
 @media (max-width:720px){
-  .bf-sidebar{display:none}
-  .bf-main{padding:20px}
+  .bf-app{flex-direction:column}
+  .bf-mtop{
+    display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:30;
+    height:56px;padding:0 12px;background:${C.azulDark};color:#E8F0EF;
+  }
+  .bf-mtop-menu{
+    position:relative;width:40px;height:40px;border:none;border-radius:10px;
+    background:transparent;color:#E8F0EF;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  }
+  .bf-mtop-n{
+    position:absolute;top:3px;right:1px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;
+    background:${C.naranja};color:#fff;font-size:10.5px;font-weight:800;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .bf-mtop-logo{width:30px;height:30px;border-radius:9px;font-size:16px;box-shadow:none}
+  .bf-mtop-titulo{font-size:15px;font-weight:700;letter-spacing:-0.2px}
+
+  .bf-sidebar{
+    position:fixed;top:0;left:0;bottom:0;height:auto;z-index:50;width:min(300px,86vw);
+    overflow-y:auto;transform:translateX(-100%);transition:transform .22s ease;
+  }
+  .bf-sidebar.is-abierto{transform:none;box-shadow:8px 0 30px rgba(0,0,0,0.25)}
+  .bf-scrim{display:block;position:fixed;inset:0;z-index:40;background:rgba(10,25,25,0.45)}
+
+  .bf-main{padding:16px 16px 32px}
+  .bf-header{margin-bottom:16px;gap:12px}
+  .bf-title{font-size:21px}
   .bf-search{width:100%}
   .bf-header-actions{width:100%;flex-direction:column;align-items:stretch}
+  /* La página hace el scroll, no una caja con altura fija dentro de ella */
+  .bf-list-body{max-height:none;overflow:visible;padding:10px}
+  .bf-fila-acciones{flex-wrap:wrap}
+  .bf-fila-acciones button{white-space:nowrap}
+  .bf-fila-quien{flex-basis:100%;max-width:100%;margin-left:0 !important}
+
+  .bf-detail{padding:0 14px 18px}
+  .bf-detail-head{margin:0 -14px 16px;padding:14px}
+  /* Con un ticket abierto, buscar y sincronizar estorban: el detalle sube hasta arriba */
+  .bf-main.con-detalle .bf-header{display:none}
+  .bf-meta-grid{grid-template-columns:repeat(2,1fr)}
+  .bf-meta-grid > .bf-meta:last-child{grid-column:1 / -1 !important}
 }
 
 /* ══════════════════════════════════════════════════════════════
