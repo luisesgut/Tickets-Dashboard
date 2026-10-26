@@ -170,7 +170,8 @@ Consequences to keep in mind when editing:
 | `App` | Root. All state, all fetching, polling every 10s. |
 | `EstadoBadge` | Status pill — looks up `ESTADO_META` dynamically. |
 | `DetalleTicket` | Right-panel detail view. `key={ticket.id}` resets local state on ticket change. |
-| `GestorConfig` | Configuration view: agents panel (name, WhatsApp, **email** — IT notices go only to the email; IT gets no WhatsApp) + whitelist panel side by side. |
+| `GestorConfig` | Configuration view: agents panel (name, WhatsApp, email, and two independent toggles **Avisos por correo / Avisos por WhatsApp** — each covers new-ticket and assignment notices) + whitelist panel side by side. |
+| `AvisosAgente` | The per-channel pills on an agent row. A channel that's on but has no address/number shows as off-colored ("correo: falta el correo"), because nothing actually reaches them. |
 | `PortalUsuario` | The end-user app: raise a ticket, follow mine, link WhatsApp. Rendered instead of everything above when `rol === "usuario"`. |
 | `FilaPortal` | One row in "Mis tickets" — folio, user-facing state, channel, age, who's on it. |
 | `DetallePortal` | Ticket detail for the requester: status in plain words, conversation, reply box (hidden on terminal states). |
@@ -186,7 +187,7 @@ Consequences to keep in mind when editing:
 #### Tickets
 - `tickets` — `{[id]: ticket}` object; updated by 10s polling
 - `stats` — `{total, abiertos, cerrados}` from `/stats`
-- `agentes` — `{[id]: {nombre, whatsapp, notificar, activo}}` from `/agentes`
+- `agentes` — `{[id]: {nombre, whatsapp, email, avisos_correo, avisos_whatsapp, notificar, activo}}` from `/agentes` (`notificar` = either channel on; kept for old backends, the UI falls back to it with `??`)
 - `selectedId` — selected ticket ID; `ticketSeleccionado` derived from this
 - `auditLog` — state-change events for selected ticket; refreshed on `selectedId` change
 - `selectedImagenes` — `[{id, mime_type, analisis, fecha, blobUrl}]` for selected ticket; blob URLs revoked on ticket change
@@ -198,7 +199,7 @@ Consequences to keep in mind when editing:
 - `vista` — `"tickets" | "config"` — determines which workspace to render
 
 #### Configuration
-- `configAgentes` — `{[id]: {nombre, whatsapp, notificar, activo}}` from `/agentes?todos=true`
+- `configAgentes` — same shape, from `/agentes?todos=true`
 - `configUsuarios` — `[{numero, nombre, area, activo}]` from `/usuarios`
 - `whitelistActiva` — bool from `/usuarios` response
 
@@ -269,9 +270,9 @@ Base URL: `REACT_APP_API_URL` env var.
 | POST | `/tickets/:id/mensaje` | `{texto, actor?}` — sends WhatsApp + records in historial |
 | GET | `/stats` | `{total, abiertos, cerrados}` |
 | GET | `/imagenes/:id` | Raw image bytes (auth required; use blob URL pattern) |
-| GET | `/agentes` | `{[id]: {nombre, whatsapp, notificar, activo}}`; `?todos=true` for inactive |
-| POST | `/agentes` | `{id, nombre, whatsapp, notificar}` |
-| PATCH | `/agentes/:id` | `nombre`, `whatsapp`, `notificar`, `activo` |
+| GET | `/agentes` | `{[id]: {nombre, whatsapp, email, avisos_correo, avisos_whatsapp, notificar, activo}}`; `?todos=true` for inactive |
+| POST | `/agentes` | `{id, nombre, whatsapp, email, avisos_correo, avisos_whatsapp}` |
+| PATCH | `/agentes/:id` | `nombre`, `whatsapp`, `email`, `avisos_correo`, `avisos_whatsapp`, `activo` |
 | GET | `/usuarios` | `{usuarios, whitelist_activa}` |
 | POST | `/usuarios` | `{numero, nombre, area?}` |
 | DELETE | `/usuarios/:numero` | Soft-delete |
