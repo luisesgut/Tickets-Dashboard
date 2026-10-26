@@ -2392,7 +2392,10 @@ function GestorUso() {
                 {lista.length === 0 ? <p className="bf-uso-vacio">{vacio}</p> : (
                   <ul className="bf-uso-lista">
                     {lista.map((p, i) => (
-                      <li key={i}><span><b>{p.nombre}</b><small>{p.area || "Sin área"}</small></span><time>{p.fecha}</time></li>
+                      <li key={i}>
+                        <span><b>{p.nombre}</b><small>{p.area || "Sin área"}{p.por === "bot" ? " · por el bot" : ""}</small></span>
+                        <time>{p.fecha}</time>
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -2651,7 +2654,13 @@ function GestorCuentas({ miUsuario }) {
                       <span className="bf-cfg-sub">
                         {p.rol !== "usuario" && <span className="bf-cfg-pill">{ROL_UI[p.rol] || p.rol}</span>}
                         <span className={`bf-cfg-pill${p.email ? "" : " bf-cfg-pill-off"}`}>{p.email ? "correo" : "sin correo"}</span>
-                        {p.whatsapp && <span className="bf-cfg-pill">WhatsApp</span>}
+                        {/* «por bot»: dijo quién era en el chat, sin contraseña — sin verificar */}
+                        {p.whatsapp && (
+                          <span className={`bf-cfg-pill${p.whatsapp_vinculado_por === "bot" ? " bf-cfg-pill-off" : ""}`}
+                                title={p.whatsapp_vinculado_por === "bot" ? "Se identificó en el chat del bot, sin contraseña" : undefined}>
+                            {p.whatsapp_vinculado_por === "bot" ? "WhatsApp · por bot" : "WhatsApp"}
+                          </span>
+                        )}
                         {!p.activo && <span className="bf-cfg-pill bf-cfg-pill-off">desactivada</span>}
                       </span>
                     </div>

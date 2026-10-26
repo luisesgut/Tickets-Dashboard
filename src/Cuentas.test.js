@@ -15,6 +15,8 @@ const PERSONAS = [
     area: "Contabilidad", whatsapp: "5214771112222", activo: true },
   { id: 3, usuario: "prami", nombre: "Pedro Ramírez", email: null, rol: "usuario",
     area: "Contabilidad", whatsapp: null, activo: true },
+  { id: 5, usuario: "mbot", nombre: "Mario Bot", email: null, rol: "usuario",
+    area: "Compras", whatsapp: "5214775550000", whatsapp_vinculado_por: "bot", activo: true },
   { id: 4, usuario: "rviejo", nombre: "Rosa Vieja", email: null, rol: "usuario",
     area: "RH", whatsapp: null, activo: false },
 ];
@@ -157,4 +159,10 @@ test("áreas: cuenta las cuentas activas, se crean y se renombran", async () => 
     metodo: "PATCH", body: { nombre: "Recursos Humanos" },
   }));
   expect(peticiones[1].u).toMatch(/\/areas-cuenta\/11$/);
+});
+
+test("un WhatsApp ligado por el bot (sin contraseña) se distingue", async () => {
+  await abrirCuentas();
+  expect(fila("Mario Bot")).toHaveTextContent("WhatsApp · por bot");
+  expect(fila("Laura Ortiz")).not.toHaveTextContent("por bot");
 });
