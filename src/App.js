@@ -1574,8 +1574,10 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           <span className="bf-meta-v">{ticket.area || "—"}</span>
         </div>
         <div className="bf-meta">
+          {/* Quién es primero; el número o correo, debajo, para contactarlo */}
           <span className="bf-meta-k"><IcPhone size={13} /> Usuario</span>
-          <span className="bf-meta-v">{contactoDe(ticket)}</span>
+          <span className="bf-meta-v">{ticket.nombre || contactoDe(ticket)}</span>
+          {ticket.nombre && <span className="bf-meta-sub">{contactoDe(ticket)}</span>}
         </div>
         <div className="bf-meta">
           <span className="bf-meta-k"><IcClock size={13} /> Apertura</span>
@@ -3866,6 +3868,7 @@ const CSS = `
 .bf-meta-k{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:${C.textMuted};text-transform:uppercase;letter-spacing:.3px}
 .bf-meta-k svg{color:${C.textFaint}}
 .bf-meta-v{font-size:14px;font-weight:600;color:${C.azulDark}}
+.bf-meta-sub{font-size:12px;color:${C.textMuted};overflow-wrap:anywhere}
 
 .bf-chat-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:${C.textMuted};margin-bottom:12px}
 .bf-chat{background:${C.surfaceAlt};border:1px solid ${C.border};border-radius:16px;padding:16px;max-height:300px;overflow-y:auto;margin-bottom:22px}

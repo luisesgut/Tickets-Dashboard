@@ -201,3 +201,13 @@ test("abrir un ticket marca el área de trabajo para mostrar solo el detalle", a
   fireEvent.click(screen.getByLabelText("Cerrar detalle"));
   expect(trabajo).not.toHaveClass("con-detalle");
 });
+
+test("en el detalle, «Usuario» dice quién es y debajo su contacto", async () => {
+  window.scrollTo = () => {};
+  render(<App />);
+  await waitFor(() => expect(document.querySelector(".bf-fila")).toBeInTheDocument());
+  fireEvent.click([...document.querySelectorAll(".bf-fila")].find((f) => f.textContent.includes("BFX-0042")));
+  const celda = (await screen.findByText("Usuario")).closest(".bf-meta");
+  expect(celda.querySelector(".bf-meta-v")).toHaveTextContent("Juan Pérez");
+  expect(celda.querySelector(".bf-meta-sub")).toHaveTextContent("+5214771234567");
+});
