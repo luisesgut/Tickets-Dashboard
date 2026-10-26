@@ -296,9 +296,29 @@ test("en cuanto el bot canjea el código, la pantalla de vincular lo celebra sol
   expect(await screen.findByRole("heading", { name: "Tu WhatsApp quedó ligado" })).toBeInTheDocument();
 });
 
+test("se puede ligar el WhatsApp desde el inicio, sin levantar un ticket", async () => {
+  await inicio();
+  fireEvent.click(screen.getByRole("button", { name: /Activa avisos por WhatsApp/ }));
+  expect(await screen.findByRole("link", { name: "Abrir WhatsApp y enviar" })).toBeInTheDocument();
+  expect(creados).toEqual([]);
+
+  // "Ahora no" regresa a donde estaba: el inicio
+  fireEvent.click(screen.getByRole("button", { name: "Ahora no" }));
+  expect(await screen.findByRole("heading", { name: /Qué está fallando/ })).toBeInTheDocument();
+});
+
+test("el link ?vincular entra directo a ligar el WhatsApp y se limpia de la URL", async () => {
+  window.history.pushState(null, "", "/?vincular");
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "Liga tu WhatsApp en un toque" })).toBeInTheDocument();
+  await waitFor(() => expect(vinculacionesPedidas).toBe(1));
+  expect(window.location.search).toBe("");
+});
+
 test("con el WhatsApp ya vinculado, no se invita a ligarlo", async () => {
   perfilActual = { ...PERFIL, whatsapp: "5214771112222", whatsapp_vinculado: true };
   await inicio();
+  expect(screen.queryByText(/Activa avisos por WhatsApp/)).toBeNull();
   await aMisTickets();
   expect(screen.queryByText(/Activa avisos por WhatsApp/)).toBeNull();
 });
@@ -362,6 +382,10 @@ describe("en computadora", () => {
     await screen.findByRole("heading", { name: /Qué está fallando/ });
     const lateral = screen.getByRole("complementary", { name: "Mis tickets" });
     await waitFor(() => expect(within(lateral).getByText("BFX-0247")).toBeInTheDocument());
+
+    // La invitación a ligar WhatsApp está en el inicio, no repetida en el lateral
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Activa avisos por WhatsApp/ })).toHaveLength(1));
+    expect(within(lateral).queryByText(/Activa avisos por WhatsApp/)).toBeNull();
 
     // La barra de arriba dice quién eres; no hay botón para "ir" a Mis tickets
     expect(screen.getByText("Laura Ortiz")).toBeInTheDocument();

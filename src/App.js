@@ -2575,7 +2575,11 @@ function PortalUsuario({ perfil, onLogout }) {
   const [cargando, setCargando] = useState(true);
   // Una pantalla a la vez, como una app de celular:
   // "tema" → "detalles" → "enviado" → "vincular", más "mis" y "detalle".
-  const [vista, setVista] = useState("tema");
+  // `?vincular` en la URL entra directo a vincular el WhatsApp (el link que va
+  // en el aviso a la gente); sobrevive al login porque no hay rutas.
+  const [vista, setVista] = useState(() =>
+    new URLSearchParams(window.location.search).has("vincular") ? "vincular" : "tema");
+  const [volverDeVinc, setVolverDeVinc] = useState("tema");
   const [pestana, setPestana] = useState("abiertos");
   const [selId, setSelId] = useState(null);
   const [detalle, setDetalle] = useState(null);
@@ -2604,6 +2608,16 @@ function PortalUsuario({ perfil, onLogout }) {
   const headers = () => ({ Authorization: `Bearer ${tok()}` });
 
   const ir = (v) => { setVista(v); window.scrollTo(0, 0); };
+  // A vincular se llega desde el inicio, desde "enviado" o desde Mis tickets;
+  // "atrás" y "Ahora no" regresan a donde estaba.
+  const irAVincular = () => { setVolverDeVinc(vista); ir("vincular"); };
+
+  // Ya se usó el ?vincular: que recargar la página no vuelva a entrar ahí.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("vincular")) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
   const abrirTicket = (id) => { setSelId(id); setRespuesta(""); ir("detalle"); };
 
   const cargarPerfil = async () => {
@@ -2771,7 +2785,7 @@ function PortalUsuario({ perfil, onLogout }) {
   );
 
   const invitacionWhatsApp = miPerfil && !vinculado && (
-    <button className="bf-pt-vinc-mini" onClick={() => ir("vincular")}>
+    <button className="bf-pt-vinc-mini" onClick={irAVincular}>
       <IcCelular size={20} />
       <span>
         <strong>Activa avisos por WhatsApp</strong>
@@ -2818,7 +2832,7 @@ function PortalUsuario({ perfil, onLogout }) {
         </div>
       )}
 
-      {invitacionWhatsApp}
+      {!escritorio && invitacionWhatsApp}
     </>
   );
 
@@ -2934,7 +2948,7 @@ function PortalUsuario({ perfil, onLogout }) {
               Te escribimos cuando quede resuelto, para que lo confirmes desde ahí. Y la
               próxima vez puedes levantar tickets desde WhatsApp, aunque no tengas computadora.
             </p>
-            <button className="bf-pt-oscuro" onClick={() => ir("vincular")}>Activar avisos por WhatsApp</button>
+            <button className="bf-pt-oscuro" onClick={irAVincular}>Activar avisos por WhatsApp</button>
             <small>Toma un minuto, solo la primera vez</small>
           </section>
         )}
@@ -2952,7 +2966,7 @@ function PortalUsuario({ perfil, onLogout }) {
     pantalla = (
       <>
         <header className="bf-pt-top paso">
-          <button className="bf-pt-atras" aria-label="Regresar" onClick={() => ir(exito ? "enviado" : "mis")}>
+          <button className="bf-pt-atras" aria-label="Regresar" onClick={() => ir(volverDeVinc)}>
             <IcAtras size={22} />
           </button>
           <span className="bf-pt-top-titulo">Avisos por WhatsApp</span>
@@ -3023,7 +3037,7 @@ function PortalUsuario({ perfil, onLogout }) {
               <BotonAccion className="bf-pt-texto" onClick={pedirCodigo} cargandoTexto="Generando…">
                 Generar otro código
               </BotonAccion>
-              <button className="bf-pt-texto gris" onClick={() => ir("mis")}>Ahora no</button>
+              <button className="bf-pt-texto gris" onClick={() => ir(volverDeVinc)}>Ahora no</button>
             </div>
           </main>
         )}
@@ -3105,6 +3119,9 @@ function PortalUsuario({ perfil, onLogout }) {
               </button>
             ))}
           </div>
+
+          {/* Quien solo entra a ligar su WhatsApp lo encuentra aquí, sin levantar ticket */}
+          {invitacionWhatsApp}
 
           {/* Lo que necesita tu atención: TI está esperando tu respuesta */}
           {primero && (
