@@ -209,6 +209,7 @@ Consequences to keep in mind when editing:
 | `App` | Root. All state, all fetching, polling every 10s. |
 | `EstadoBadge` | Status pill — looks up `ESTADO_META` dynamically. |
 | `DetalleTicket` | Right-panel detail view. `key={ticket.id}` resets local state on ticket change. |
+| `GestorUso` | **Admin only** (sidebar "Uso"). `GET /uso?dias=7|30|90`: four stat tiles (WhatsApp linked, signed in, wrote to the bot, tickets), three per-day bar charts (`BarrasPorDia`: tickets WhatsApp vs portal stacked, people writing to the bot, people linking), per-area adoption, who writes to the bot, recent links/sign-ins, and codes never sent. Chart series colors `SERIE_WHATSAPP #2A78A8` / `SERIE_PORTAL #D06430` were run through the dataviz validator on white (the brand teal fails the chroma floor as a series color). Each chart has a hover tooltip over the whole day column and a "Ver datos" table. Tests: `Uso.test.js` |
 | `GestorCuentas` | **Admin only** (`perfil.rol === "admin"`, sidebar "Cuentas"). Accounts (search, active/deactivated, role filter, inline edit, new account with initial password) + the area catalog (create, rename, deactivate). Loads its own data from `/personas` and `/areas-cuenta`, like the portal does; the backend validates everything and its `detail` is shown as-is. Deactivate, never delete. Tests: `Cuentas.test.js` |
 | `GestorConfig` | Configuration view: agents panel (name, WhatsApp, email, and two independent toggles **Avisos por correo / Avisos por WhatsApp** — each covers new-ticket and assignment notices) + whitelist panel side by side. |
 | `AvisosAgente` | The per-channel pills on an agent row. A channel that's on but has no address/number shows as off-colored ("correo: falta el correo"), because nothing actually reaches them. |
@@ -236,7 +237,7 @@ Consequences to keep in mind when editing:
 - `syncing` — true during active fetch
 
 #### Navigation
-- `vista` — `"tickets" | "cuentas" | "config"` — determines which workspace to render
+- `vista` — `"tickets" | "uso" | "cuentas" | "config"` — determines which workspace to render
 
 #### Configuration
 - `configAgentes` — same shape, from `/agentes?todos=true`

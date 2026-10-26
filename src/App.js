@@ -314,6 +314,9 @@ const IcCelular = (p) => (
 const IcWhatsApp = (p) => (
   <Icon {...p} d={<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>} />
 );
+const IcBarras = (p) => (
+  <Icon {...p} d={<><line x1="6" y1="20" x2="6" y2="13"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="10"/></>} />
+);
 const IcMenu = (p) => (
   <Icon {...p} d={<><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></>} />
 );
@@ -494,7 +497,7 @@ function App() {
   );
 
   // ── Estado del dashboard ─────────────────────────────────────
-  const [vista, setVista] = useState("tickets"); // "tickets" | "cuentas" | "config"
+  const [vista, setVista] = useState("tickets"); // "tickets" | "uso" | "cuentas" | "config"
   const [tickets, setTickets] = useState({});
   const [agentes, setAgentes] = useState({});
   const [selectedId, setSelectedId] = useState(null);
@@ -1211,6 +1214,14 @@ function App() {
         <div className="bf-side-links">
           {perfil?.rol === "admin" && (
             <button
+              className={`bf-side-link${vista === "uso" ? " is-active" : ""}`}
+              onClick={() => setVista("uso")}
+            >
+              <IcBarras size={15} /> Uso
+            </button>
+          )}
+          {perfil?.rol === "admin" && (
+            <button
               className={`bf-side-link${vista === "cuentas" ? " is-active" : ""}`}
               onClick={() => setVista("cuentas")}
             >
@@ -1242,6 +1253,7 @@ function App() {
             <h1 className="bf-title">
               {vista === "config" ? "Configuración"
                 : vista === "cuentas" ? "Cuentas"
+                : vista === "uso" ? "Uso"
                 : (TITULOS[filtro] || "Cola de trabajo")}
             </h1>
             <p className="bf-subtitle">
@@ -1249,6 +1261,8 @@ function App() {
                 ? "Agentes de soporte y whitelist de usuarios"
                 : vista === "cuentas"
                 ? "Quién entra al portal, con qué área y qué rol"
+                : vista === "uso"
+                ? "Quién ya usa el portal y el WhatsApp"
                 : masViejoSinAtender ? (
                     <>
                       {gruposVisibles.sin_atender.length}{" "}
@@ -1274,7 +1288,7 @@ function App() {
                 />
               </div>
             )}
-            {vista !== "cuentas" && <button className="bf-sync" onClick={fetchData} disabled={syncing}>
+            {vista !== "cuentas" && vista !== "uso" && <button className="bf-sync" onClick={fetchData} disabled={syncing}>
               <IcRefresh size={16} className={syncing ? "bf-spin" : ""} />
               {syncing ? "Sincronizando" : "Sincronizar"}
             </button>}
@@ -1282,7 +1296,9 @@ function App() {
         </header>
 
         {/* Workspace */}
-        {vista === "cuentas" && perfil?.rol === "admin" ? (
+        {vista === "uso" && perfil?.rol === "admin" ? (
+          <GestorUso />
+        ) : vista === "cuentas" && perfil?.rol === "admin" ? (
           <GestorCuentas miUsuario={perfil?.usuario} />
         ) : vista === "config" ? (
           <GestorConfig
@@ -2139,6 +2155,274 @@ function GestorConfig({ agentes, usuarios, whitelistActiva, onCrearAgente, onAct
 /* ──────────────────────────────────────────────────────────────
    Estilos
    ────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────
+   USO (solo admin): adopción del portal y del WhatsApp
+   ────────────────────────────────────────────────────────────── */
+
+// Series de las gráficas, validadas con el script de dataviz (contraste,
+// daltonismo, croma) sobre fondo blanco. El verde de la marca sale gris como
+// color de serie, por eso WhatsApp va en azul.
+const SERIE_WHATSAPP = "#2A78A8";
+const SERIE_PORTAL = "#D06430";
+
+const diaCorto = (iso) =>
+  new Date(`${iso}T12:00:00`).toLocaleDateString("es-MX", { day: "numeric", month: "short" });
+
+// Barras por día, apiladas cuando hay más de una serie. Divs en vez de SVG para
+// que se estire al ancho sin deformar texto; el detalle va en un tooltip al
+// pasar el mouse por toda la columna del día (blanco más grande que la barra).
+function BarrasPorDia({ titulo, datos, series, detalle }) {
+  const [hover, setHover] = useState(null);
+  const total = (d) => series.reduce((s, x) => s + (d[x.clave] || 0), 0);
+  const max = Math.max(1, ...datos.map(total));
+  const vacio = datos.every((d) => total(d) === 0);
+  const medio = Math.floor(datos.length / 2);
+  return (
+    <figure className="bf-uso-graf">
+      <figcaption className="bf-uso-graf-head">
+        <span className="bf-uso-graf-titulo">{titulo}</span>
+        {series.length > 1 && (
+          <span className="bf-uso-leyenda">
+            {series.map((x) => (
+              <span key={x.clave}><i style={{ background: x.color }} />{x.label}</span>
+            ))}
+          </span>
+        )}
+      </figcaption>
+      {vacio ? (
+        <p className="bf-uso-vacio">Sin actividad en este periodo.</p>
+      ) : (
+        <>
+          <div className="bf-uso-plot" onMouseLeave={() => setHover(null)}>
+            <span className="bf-uso-max">{max}</span>
+            <div className="bf-uso-barras">
+              {datos.map((d, i) => (
+                <div key={d.dia} className="bf-uso-col" onMouseEnter={() => setHover(i)}>
+                  <div className="bf-uso-pila" style={{ height: `${(total(d) / max) * 100}%` }}>
+                    {series.map((x) => d[x.clave] > 0 && (
+                      <span key={x.clave} style={{ flexGrow: d[x.clave], background: x.color }} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {hover !== null && (
+              // Dentro de la gráfica (no tapa la leyenda) y hacia el lado con espacio:
+              // en las orillas no se sale de la tarjeta ni de la pantalla
+              <div className={`bf-uso-tip${hover < datos.length / 3 ? " izq" : hover > (datos.length * 2) / 3 ? " der" : ""}`}
+                   style={{ left: `${((hover + 0.5) / datos.length) * 100}%` }}>
+                <b>{diaCorto(datos[hover].dia)}</b>
+                {detalle(datos[hover]).map(([k, v, color]) => (
+                  <span key={k}>{color && <i style={{ background: color }} />}{k}: <b>{v}</b></span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="bf-uso-ejex">
+            <span>{diaCorto(datos[0].dia)}</span>
+            <span>{diaCorto(datos[medio].dia)}</span>
+            <span>{diaCorto(datos[datos.length - 1].dia)}</span>
+          </div>
+          <details className="bf-uso-datos">
+            <summary>Ver datos</summary>
+            <table>
+              <thead><tr><th>Día</th>{detalle(datos[0]).map(([k]) => <th key={k}>{k}</th>)}</tr></thead>
+              <tbody>
+                {datos.filter((d) => total(d) > 0).map((d) => (
+                  <tr key={d.dia}><td>{diaCorto(d.dia)}</td>{detalle(d).map(([k, v]) => <td key={k}>{v}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        </>
+      )}
+    </figure>
+  );
+}
+
+function GestorUso() {
+  const [dias, setDias] = useState(30);
+  const [uso, setUso] = useState(null);
+  const [error, setError] = useState("");
+
+  const cargar = async (n) => {
+    setError("");
+    try {
+      const r = await fetch(`${API}/uso?dias=${n}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("bf_token")}` },
+      });
+      if (!r.ok) throw new Error();
+      setUso(await r.json());
+    } catch { setError("No se pudo cargar el uso."); }
+  };
+  useEffect(() => { setUso(null); cargar(dias); }, [dias]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const c = uso?.cuentas;
+
+  return (
+    <section className="bf-uso">
+      <div className="bf-uso-filtros" role="tablist" aria-label="Periodo">
+        {[7, 30, 90].map((n) => (
+          <button key={n} role="tab" aria-selected={dias === n} className="bf-uso-periodo" onClick={() => setDias(n)}>
+            {n} días
+          </button>
+        ))}
+      </div>
+
+      {error ? (
+        <div className="bf-empty"><p className="bf-empty-title">{error}</p></div>
+      ) : !uso ? (
+        <div className="bf-uso-kpis">{[0, 1, 2, 3].map((i) => <div key={i} className="bf-skel" />)}</div>
+      ) : (
+        <>
+          <div className="bf-uso-kpis">
+            <div className="bf-uso-kpi">
+              <span className="bf-uso-kpi-k">WhatsApp ligado</span>
+              <span className="bf-uso-kpi-v">{c.con_whatsapp} <small>de {c.usuarios}</small></span>
+              <span className="bf-uso-kpi-s">{pct(c.con_whatsapp, c.usuarios)}% de las cuentas de usuario</span>
+            </div>
+            <div className="bf-uso-kpi">
+              <span className="bf-uso-kpi-k">Entraron al portal</span>
+              <span className="bf-uso-kpi-v">{c.entraron_en_periodo}</span>
+              <span className="bf-uso-kpi-s">en {dias} días · {c.entraron_alguna_vez} alguna vez</span>
+            </div>
+            <div className="bf-uso-kpi">
+              <span className="bf-uso-kpi-k">Le escribieron al bot</span>
+              <span className="bf-uso-kpi-v">{uso.bot.numeros}</span>
+              <span className="bf-uso-kpi-s">{uso.bot.sin_cuenta} sin cuenta ligada · {uso.bot.mensajes} mensajes</span>
+            </div>
+            <div className="bf-uso-kpi">
+              <span className="bf-uso-kpi-k">Tickets</span>
+              <span className="bf-uso-kpi-v">{uso.tickets.whatsapp + uso.tickets.web}</span>
+              <span className="bf-uso-kpi-s">{uso.tickets.whatsapp} por WhatsApp · {uso.tickets.web} por portal</span>
+            </div>
+          </div>
+
+          <div className="bf-uso-grid">
+            <div className="bf-panel bf-uso-panel">
+              <BarrasPorDia
+                titulo="Tickets por día"
+                datos={uso.por_dia}
+                series={[
+                  { clave: "tickets_whatsapp", label: "WhatsApp", color: SERIE_WHATSAPP },
+                  { clave: "tickets_web", label: "Portal", color: SERIE_PORTAL },
+                ]}
+                detalle={(d) => [["WhatsApp", d.tickets_whatsapp, SERIE_WHATSAPP], ["Portal", d.tickets_web, SERIE_PORTAL]]}
+              />
+            </div>
+            <div className="bf-panel bf-uso-panel">
+              <BarrasPorDia
+                titulo="Personas que le escriben al bot"
+                datos={uso.por_dia}
+                series={[{ clave: "numeros_bot", label: "Personas", color: SERIE_WHATSAPP }]}
+                detalle={(d) => [["Personas", d.numeros_bot], ["Mensajes", d.mensajes_bot]]}
+              />
+            </div>
+            <div className="bf-panel bf-uso-panel">
+              <BarrasPorDia
+                titulo="Ligaron su WhatsApp"
+                datos={uso.por_dia}
+                series={[{ clave: "ligaron", label: "Ligaron", color: SERIE_WHATSAPP }]}
+                detalle={(d) => [["Ligaron", d.ligaron]]}
+              />
+            </div>
+
+            <div className="bf-panel bf-uso-panel">
+              <div className="bf-uso-graf-titulo">Adopción por área</div>
+              <div className="bf-uso-scroll">
+              <table className="bf-uso-tabla">
+                <thead><tr><th>Área</th><th>Cuentas</th><th>WhatsApp</th><th>Entraron</th></tr></thead>
+                <tbody>
+                  {uso.por_area.map((a) => (
+                    <tr key={a.area}>
+                      <td>{a.area}</td>
+                      <td>{a.cuentas}</td>
+                      <td>
+                        <span className="bf-uso-barrita" aria-hidden="true">
+                          <i style={{ width: `${pct(a.con_whatsapp, a.cuentas)}%` }} />
+                        </span>
+                        {a.con_whatsapp} <small>({pct(a.con_whatsapp, a.cuentas)}%)</small>
+                      </td>
+                      <td>{a.entraron}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              </div>
+            </div>
+          </div>
+
+          <div className="bf-panel bf-uso-panel">
+            <div className="bf-uso-graf-titulo">Quién le escribe al bot <small>· últimos {dias} días</small></div>
+            {uso.escritores.length === 0 ? (
+              <p className="bf-uso-vacio">Nadie le ha escrito al bot en este periodo.</p>
+            ) : (
+              <div className="bf-uso-scroll">
+                <table className="bf-uso-tabla">
+                  <thead><tr><th>Quién</th><th>Número</th><th>Área</th><th></th><th>Mensajes</th><th>Último</th></tr></thead>
+                  <tbody>
+                    {uso.escritores.map((e) => (
+                      <tr key={e.numero}>
+                        <td>{e.nombre || <span className="bf-uso-tenue">Sin cuenta</span>}</td>
+                        <td>+{e.numero}</td>
+                        <td>{e.area || "—"}</td>
+                        <td>
+                          {e.ti ? <span className="bf-cfg-pill">TI</span>
+                            : e.ligado ? <span className="bf-cfg-pill">Ligado</span>
+                            : <span className="bf-cfg-pill bf-cfg-pill-off">Sin ligar</span>}
+                        </td>
+                        <td>{e.mensajes}</td>
+                        <td>{e.ultimo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="bf-uso-grid tres">
+            {[
+              ["Ligaron recientemente", uso.ligaron, "Todavía nadie ligó su WhatsApp."],
+              ["Últimos accesos al portal", uso.accesos, "Todavía nadie ha entrado."],
+            ].map(([titulo, lista, vacio]) => (
+              <div key={titulo} className="bf-panel bf-uso-panel">
+                <div className="bf-uso-graf-titulo">{titulo}</div>
+                {lista.length === 0 ? <p className="bf-uso-vacio">{vacio}</p> : (
+                  <ul className="bf-uso-lista">
+                    {lista.map((p, i) => (
+                      <li key={i}><span><b>{p.nombre}</b><small>{p.area || "Sin área"}</small></span><time>{p.fecha}</time></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+            <div className="bf-panel bf-uso-panel">
+              <div className="bf-uso-graf-titulo">Se quedaron a medias</div>
+              <p className="bf-uso-nota">Pidieron su código de WhatsApp y no lo mandaron.</p>
+              {uso.pendientes.length === 0 ? <p className="bf-uso-vacio">Nadie pendiente.</p> : (
+                <ul className="bf-uso-lista">
+                  {uso.pendientes.map((p, i) => (
+                    <li key={i}>
+                      <span><b>{p.nombre}</b><small>{p.area || "Sin área"}{p.vencido ? " · código vencido" : ""}</small></span>
+                      <time>{p.pedido}</time>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+          <p className="bf-uso-nota">
+            Cuándo ligó cada quien su WhatsApp y su último acceso se registran desde el 26/10/2026;
+            los mensajes y tickets, desde el inicio. Los días son en hora de planta.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────
    CUENTAS (solo admin): las personas del sistema y el catálogo de áreas
    ────────────────────────────────────────────────────────────── */
@@ -3743,6 +4027,60 @@ const CSS = `
 .bf-cfg-pill-off{background:${C.border};color:${C.textMuted}}
 .bf-cfg-toggles{display:flex;gap:16px}
 .bf-cfg-toggle{display:flex;align-items:center;gap:6px;font-size:13px;color:${C.textMuted};cursor:pointer}
+/* ── Uso ── */
+.bf-uso{display:flex;flex-direction:column;gap:16px}
+.bf-uso-filtros{display:inline-flex;align-self:flex-start;padding:4px;border-radius:12px;background:${C.border}}
+.bf-uso-periodo{height:34px;padding:0 14px;border:none;border-radius:9px;background:transparent;color:#4A6361;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.bf-uso-periodo[aria-selected="true"]{background:#fff;color:${C.azulDark};box-shadow:0 1px 3px rgba(21,62,62,.12)}
+.bf-uso-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.bf-uso-kpis .bf-skel{height:104px}
+.bf-uso-kpi{display:flex;flex-direction:column;gap:4px;padding:16px 18px;border-radius:16px;background:#fff;border:1px solid ${C.border}}
+.bf-uso-kpi-k{font-size:12.5px;font-weight:600;color:${C.textMuted}}
+.bf-uso-kpi-v{font-size:30px;font-weight:800;letter-spacing:-0.8px;color:${C.azulDark};line-height:1.1}
+.bf-uso-kpi-v small{font-size:15px;font-weight:600;color:${C.textMuted};letter-spacing:0}
+.bf-uso-kpi-s{font-size:12.5px;color:${C.textMuted}}
+.bf-uso-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.bf-uso-grid.tres{grid-template-columns:repeat(3,minmax(0,1fr))}
+.bf-uso-panel{padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.bf-uso-graf{margin:0;display:flex;flex-direction:column;gap:10px}
+.bf-uso-graf-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.bf-uso-graf-titulo{font-size:14px;font-weight:700;color:${C.azulDark}}
+.bf-uso-graf-titulo small{font-weight:500;color:${C.textMuted}}
+.bf-uso-leyenda{display:flex;gap:12px;font-size:12px;color:${C.textMuted}}
+.bf-uso-leyenda span,.bf-uso-tip span{display:inline-flex;align-items:center;gap:5px}
+.bf-uso-leyenda i,.bf-uso-tip i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.bf-uso-plot{position:relative;height:150px;border-bottom:1px solid ${C.borderStrong};
+  background:linear-gradient(${C.border},${C.border}) 0 0 / 100% 1px no-repeat}
+.bf-uso-max{position:absolute;top:-8px;left:0;font-size:11px;color:${C.textMuted};background:#fff;padding-right:6px}
+.bf-uso-barras{position:absolute;inset:8px 0 0 0;display:flex;align-items:flex-end;gap:2px}
+.bf-uso-col{flex:1;height:100%;display:flex;align-items:flex-end;min-width:0}
+.bf-uso-col:hover{background:rgba(133,182,196,0.12)}
+.bf-uso-pila{width:100%;max-width:22px;margin:0 auto;display:flex;flex-direction:column-reverse;gap:2px;border-radius:4px 4px 0 0;overflow:hidden}
+.bf-uso-pila span{display:block;min-height:2px}
+.bf-uso-tip{position:absolute;top:14px;transform:translateX(-50%);z-index:3;pointer-events:none;
+  display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:10px;background:#fff;border:1px solid ${C.borderStrong};
+  box-shadow:0 6px 18px rgba(21,62,62,0.14);font-size:12px;color:${C.text};white-space:nowrap}
+.bf-uso-tip.izq{transform:translateX(-8px)}
+.bf-uso-tip.der{transform:translateX(calc(-100% + 8px))}
+.bf-uso-ejex{display:flex;justify-content:space-between;font-size:11px;color:${C.textMuted}}
+.bf-uso-datos summary{font-size:12px;font-weight:600;color:${C.textMuted};cursor:pointer}
+.bf-uso-datos table{margin-top:8px}
+.bf-uso-datos table,.bf-uso-tabla{width:100%;border-collapse:collapse;font-size:12.5px}
+.bf-uso-datos th,.bf-uso-datos td,.bf-uso-tabla th,.bf-uso-tabla td{text-align:left;padding:7px 8px;border-bottom:1px solid ${C.border};white-space:nowrap}
+.bf-uso-datos th,.bf-uso-tabla th{font-size:11.5px;font-weight:700;color:${C.textMuted};text-transform:uppercase;letter-spacing:.4px}
+.bf-uso-tabla small{color:${C.textMuted}}
+.bf-uso-barrita{display:inline-block;width:56px;height:6px;border-radius:3px;background:${C.border};margin-right:8px;vertical-align:middle;overflow:hidden}
+.bf-uso-barrita i{display:block;height:100%;background:#2A78A8;border-radius:3px}
+.bf-uso-scroll{overflow-x:auto}
+.bf-uso-tenue{color:${C.textMuted};font-style:italic}
+.bf-uso-lista{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.bf-uso-lista li{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid ${C.border};font-size:13px}
+.bf-uso-lista li span{display:flex;flex-direction:column;min-width:0}
+.bf-uso-lista small{font-size:12px;color:${C.textMuted}}
+.bf-uso-lista time{font-size:12px;color:${C.textMuted};white-space:nowrap}
+.bf-uso-vacio{font-size:13px;color:${C.textMuted};padding:18px 0;text-align:center}
+.bf-uso-nota{font-size:12px;color:${C.textMuted};line-height:1.5}
+@media (max-width:1080px){.bf-uso-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.bf-uso-grid,.bf-uso-grid.tres{grid-template-columns:minmax(0,1fr)}}
 .bf-cta{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
 .bf-cta-filtros{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 14px 0}
 .bf-cta-filtros input{grid-column:1 / -1}
