@@ -1675,6 +1675,51 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
         })}
       </div>
 
+      {/* Mensaje directo vía WhatsApp: justo bajo la conversación, como en un chat */}
+      <div className="bf-msg-direct">
+        <label className="bf-assign-label">Mensaje directo al usuario</label>
+
+        {/* Templates rápidos */}
+        <div className="bf-msg-templates">
+          {TEMPLATES_RAPIDOS.map(tpl => (
+            <BotonAccion
+              key={tpl.label}
+              className="bf-msg-tpl-btn"
+              onClick={() => enviar(tpl.texto)}
+              disabled={msgEnviando}
+              title={tpl.texto}
+              cargandoTexto="Enviando…"
+            >
+              {tpl.label}
+            </BotonAccion>
+          ))}
+        </div>
+
+        {/* Textarea + envío manual */}
+        <div className="bf-msg-compose">
+          <textarea
+            className="bf-notas-area bf-scroll"
+            value={msgTexto}
+            onChange={e => setMsgTexto(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) enviar(); }}
+            placeholder="Escribe un mensaje personalizado… (Cmd+Enter para enviar)"
+            rows={2}
+          />
+          <BotonAccion
+            className="bf-msg-send-btn"
+            onClick={() => enviar()}
+            disabled={!msgTexto.trim() || msgEnviando}
+            cargandoTexto="Enviando…"
+          >
+            <IcSend size={15} />
+            Enviar
+          </BotonAccion>
+        </div>
+
+        {msgFeedback === "ok" && <p className="bf-msg-ok">Mensaje enviado ✓</p>}
+        {msgFeedback === "error" && <p className="bf-msg-err">Error al enviar. Verifica la conexión.</p>}
+      </div>
+
       {/* Imágenes adjuntas */}
       {imagenes.length > 0 && (
         <div className="bf-imgs-section">
@@ -1776,51 +1821,6 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
             Guardar notas
           </BotonAccion>
         )}
-      </div>
-
-      {/* Mensaje directo vía WhatsApp */}
-      <div className="bf-msg-direct">
-        <label className="bf-assign-label">Mensaje directo al usuario</label>
-
-        {/* Templates rápidos */}
-        <div className="bf-msg-templates">
-          {TEMPLATES_RAPIDOS.map(tpl => (
-            <BotonAccion
-              key={tpl.label}
-              className="bf-msg-tpl-btn"
-              onClick={() => enviar(tpl.texto)}
-              disabled={msgEnviando}
-              title={tpl.texto}
-              cargandoTexto="Enviando…"
-            >
-              {tpl.label}
-            </BotonAccion>
-          ))}
-        </div>
-
-        {/* Textarea + envío manual */}
-        <div className="bf-msg-compose">
-          <textarea
-            className="bf-notas-area bf-scroll"
-            value={msgTexto}
-            onChange={e => setMsgTexto(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) enviar(); }}
-            placeholder="Escribe un mensaje personalizado… (Cmd+Enter para enviar)"
-            rows={2}
-          />
-          <BotonAccion
-            className="bf-msg-send-btn"
-            onClick={() => enviar()}
-            disabled={!msgTexto.trim() || msgEnviando}
-            cargandoTexto="Enviando…"
-          >
-            <IcSend size={15} />
-            Enviar
-          </BotonAccion>
-        </div>
-
-        {msgFeedback === "ok" && <p className="bf-msg-ok">Mensaje enviado ✓</p>}
-        {msgFeedback === "error" && <p className="bf-msg-err">Error al enviar. Verifica la conexión.</p>}
       </div>
 
       {/* Transiciones de estado */}
