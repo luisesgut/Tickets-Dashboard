@@ -346,3 +346,35 @@ test("con área en el perfil, no se vuelve a preguntar", async () => {
   await waitFor(() => expect(creados.length).toBe(1));
   expect(creados[0].area).toBeUndefined();   // el backend la toma del perfil
 });
+
+describe("en computadora", () => {
+  // jsdom no trae matchMedia: se simula una pantalla ancha
+  beforeEach(() => {
+    window.matchMedia = jest.fn((q) => ({
+      matches: q === "(min-width: 960px)", media: q,
+      addEventListener: jest.fn(), removeEventListener: jest.fn(),
+    }));
+  });
+  afterEach(() => { delete window.matchMedia; });
+
+  test("Mis tickets está siempre al lado del flujo para levantar uno", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: /Qué está fallando/ });
+    const lateral = screen.getByRole("complementary", { name: "Mis tickets" });
+    await waitFor(() => expect(within(lateral).getByText("BFX-0247")).toBeInTheDocument());
+
+    // La barra de arriba dice quién eres; no hay botón para "ir" a Mis tickets
+    expect(screen.getByText("Laura Ortiz")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Mis tickets/ })).toBeNull();
+
+    // Abrir un ticket lo muestra en la columna principal y lo marca en la lista
+    fireEvent.click(within(lateral).getByText("BFX-0247").closest("button"));
+    await waitFor(() => expect(document.querySelector(".bf-pt-principal .bf-pt-chat")).toBeInTheDocument());
+    expect(within(lateral).getByText("BFX-0247").closest("button")).toHaveAttribute("aria-current", "true");
+
+    // Y desde ahí se vuelve a levantar uno sin perder la lista
+    fireEvent.click(within(lateral).getByRole("button", { name: /Nuevo ticket/ }));
+    expect(await screen.findByRole("heading", { name: /Qué está fallando/ })).toBeInTheDocument();
+    expect(within(lateral).getByText("BFX-0247")).toBeInTheDocument();
+  });
+});

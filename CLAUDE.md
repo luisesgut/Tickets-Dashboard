@@ -53,8 +53,17 @@ replaces the whole app until `POST /mi/password` succeeds. Tests: `Login.test.js
 
 ### PortalUsuario — what an administrative user sees
 
-**Mobile first, one screen at a time** (`vista`), designed as "propuesta C" in the
-"Portal de tickets móvil" canvas. On a computer it's the same 560 px column, centered.
+Designed as "propuesta C" in the "Portal de tickets móvil" canvas. **Responsive, and it
+changes shape, not just size** (`useEsEscritorio`, `ESCRITORIO = (min-width: 960px)`):
+
+- **Phone / tablet**: one screen at a time (`vista`), the flows below.
+- **Computer**: a top bar (brand, name · area, Salir) over a two-column grid — the flow in
+  `.bf-pt-principal` and "Mis tickets" always visible in the `<aside>` (`contenidoMis`,
+  the same JSX the phone's "mis" screen uses). `vistaPrincipal` maps `"mis"` to `"tema"`
+  there, since the list is already on the side; a ticket opens in the main column and is
+  marked in the list (`FilaPortal seleccionado`). Styles: `.escritorio …` overrides.
+  The admins use it on desktop as much as on phones (Luis, 2026-10-26) — don't regress
+  it to a centered phone column.
 
 ```
 tema (home: "¿Qué está fallando?")  → detalles (paso 2) → enviado → vincular

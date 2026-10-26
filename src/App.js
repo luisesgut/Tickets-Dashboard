@@ -2225,7 +2225,24 @@ const mmss = (ms) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
+// El portal cambia de forma, no solo de tamaño: en celular, una pantalla a la
+// vez; en computadora, el flujo a la izquierda y "Mis tickets" siempre al lado.
+const ESCRITORIO = "(min-width: 960px)";
+function useEsEscritorio() {
+  const consulta = () => !!window.matchMedia && window.matchMedia(ESCRITORIO).matches;
+  const [es, setEs] = useState(consulta);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const m = window.matchMedia(ESCRITORIO);
+    const cambio = () => setEs(m.matches);
+    m.addEventListener("change", cambio);
+    return () => m.removeEventListener("change", cambio);
+  }, []);
+  return es;
+}
+
 function PortalUsuario({ perfil, onLogout }) {
+  const escritorio = useEsEscritorio();
   const [miPerfil, setMiPerfil] = useState(null);
   const [misTickets, setMisTickets] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -2437,9 +2454,54 @@ function PortalUsuario({ perfil, onLogout }) {
     </button>
   );
 
+  const listaMis = pestana === "abiertos" ? abiertos : cerrados;
+  const contenidoMis = (
+    <>
+      <div className="bf-pt-tabs" role="tablist" aria-label="Filtrar tickets">
+        <button role="tab" className="bf-pt-tab" aria-selected={pestana === "abiertos"} onClick={() => setPestana("abiertos")}>
+          Abiertos · {abiertos.length}
+        </button>
+        <button role="tab" className="bf-pt-tab" aria-selected={pestana === "resueltos"} onClick={() => setPestana("resueltos")}>
+          Resueltos · {cerrados.length}
+        </button>
+      </div>
+
+      {cargando ? (
+        <p className="bf-pt-vacio">Cargando…</p>
+      ) : misTickets.length === 0 ? (
+        <p className="bf-pt-vacio">
+          Todavía no has levantado ningún ticket. Cuando lo hagas, aquí puedes
+          seguirle la pista sin preguntarle a nadie.
+        </p>
+      ) : listaMis.length === 0 ? (
+        <p className="bf-pt-vacio">
+          {pestana === "abiertos" ? "No tienes tickets abiertos." : "Todavía no tienes tickets resueltos."}
+        </p>
+      ) : (
+        <div className="bf-pt-lista">
+          {listaMis.map((t) => (
+            <FilaPortal
+              key={t.id}
+              t={t}
+              ahora={ahora}
+              seleccionado={vista === "detalle" && selId === t.id}
+              onAbrir={() => abrirTicket(t.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {invitacionWhatsApp}
+    </>
+  );
+
+  // En computadora "Mis tickets" vive en el lateral; la columna principal
+  // muestra el flujo para levantar uno.
+  const vistaPrincipal = escritorio && vista === "mis" ? "tema" : vista;
+
   let pantalla;
 
-  if (vista === "detalles") {
+  if (vistaPrincipal === "detalles") {
     pantalla = (
       <>
         <header className="bf-pt-top paso">
@@ -2522,7 +2584,7 @@ function PortalUsuario({ perfil, onLogout }) {
         </main>
       </>
     );
-  } else if (vista === "enviado" && exito) {
+  } else if (vistaPrincipal === "enviado" && exito) {
     pantalla = (
       <main className="bf-pt-cuerpo">
         <div className="bf-pt-centro">
@@ -2556,7 +2618,7 @@ function PortalUsuario({ perfil, onLogout }) {
         </div>
       </main>
     );
-  } else if (vista === "vincular") {
+  } else if (vistaPrincipal === "vincular") {
     const restante = vinc ? Math.max(0, vinc.vence - reloj) : 0;
     const vencido = !!vinc && restante === 0;
     const codigoListo = vinc && !vencido;
@@ -2640,8 +2702,7 @@ function PortalUsuario({ perfil, onLogout }) {
         )}
       </>
     );
-  } else if (vista === "mis") {
-    const lista = pestana === "abiertos" ? abiertos : cerrados;
+  } else if (vistaPrincipal === "mis") {
     pantalla = (
       <>
         <header className="bf-pt-top con-borde">
@@ -2654,35 +2715,7 @@ function PortalUsuario({ perfil, onLogout }) {
             <p className="bf-pt-sub">{perfil?.nombre}{area ? ` · ${area}` : ""}</p>
           </div>
 
-          <div className="bf-pt-tabs" role="tablist" aria-label="Filtrar tickets">
-            <button role="tab" className="bf-pt-tab" aria-selected={pestana === "abiertos"} onClick={() => setPestana("abiertos")}>
-              Abiertos · {abiertos.length}
-            </button>
-            <button role="tab" className="bf-pt-tab" aria-selected={pestana === "resueltos"} onClick={() => setPestana("resueltos")}>
-              Resueltos · {cerrados.length}
-            </button>
-          </div>
-
-          {cargando ? (
-            <p className="bf-pt-vacio">Cargando…</p>
-          ) : misTickets.length === 0 ? (
-            <p className="bf-pt-vacio">
-              Todavía no has levantado ningún ticket. Cuando lo hagas, aquí puedes
-              seguirle la pista sin preguntarle a nadie.
-            </p>
-          ) : lista.length === 0 ? (
-            <p className="bf-pt-vacio">
-              {pestana === "abiertos" ? "No tienes tickets abiertos." : "Todavía no tienes tickets resueltos."}
-            </p>
-          ) : (
-            <div className="bf-pt-lista">
-              {lista.map((t) => (
-                <FilaPortal key={t.id} t={t} ahora={ahora} onAbrir={() => abrirTicket(t.id)} />
-              ))}
-            </div>
-          )}
-
-          {invitacionWhatsApp}
+          {contenidoMis}
         </main>
         <div className="bf-pt-pie-fijo">
           <button className="bf-pt-primario" onClick={() => ir("tema")}>
@@ -2691,7 +2724,7 @@ function PortalUsuario({ perfil, onLogout }) {
         </div>
       </>
     );
-  } else if (vista === "detalle") {
+  } else if (vistaPrincipal === "detalle") {
     pantalla = (
       <>
         <header className="bf-pt-top paso">
@@ -2718,13 +2751,15 @@ function PortalUsuario({ perfil, onLogout }) {
     const primero = esperanTuRespuesta[0];
     pantalla = (
       <>
-        <header className="bf-pt-top">
-          {marca}
-          <button className="bf-pt-mis" onClick={() => ir("mis")}>
-            Mis tickets
-            {abiertos.length > 0 && <span className="bf-pt-mis-n">{abiertos.length}</span>}
-          </button>
-        </header>
+        {!escritorio && (
+          <header className="bf-pt-top">
+            {marca}
+            <button className="bf-pt-mis" onClick={() => ir("mis")}>
+              Mis tickets
+              {abiertos.length > 0 && <span className="bf-pt-mis-n">{abiertos.length}</span>}
+            </button>
+          </header>
+        )}
         <main className="bf-pt-cuerpo">
           <div className="bf-pt-titulo">
             <div className="bf-pt-pasos">
@@ -2763,6 +2798,36 @@ function PortalUsuario({ perfil, onLogout }) {
     );
   }
 
+  if (escritorio) {
+    return (
+      <div className="bf-portal escritorio">
+        <style>{CSS}</style>
+        <header className="bf-pt-barra">
+          {marca}
+          <div className="bf-pt-quien">
+            <strong>{perfil?.nombre}</strong>
+            {area && <span>{area}</span>}
+          </div>
+          <button className="bf-pt-salir" onClick={onLogout}>Salir</button>
+        </header>
+        <div className="bf-pt-escritorio">
+          <section className="bf-pt-principal">{pantalla}</section>
+          <aside className="bf-pt-lateral" aria-label="Mis tickets">
+            <div className="bf-pt-lateral-head">
+              <h2>Mis tickets</h2>
+              {vistaPrincipal !== "tema" && vistaPrincipal !== "detalles" && (
+                <button className="bf-pt-nuevo-mini" onClick={() => ir("tema")}>
+                  <IcPlus size={16} /> Nuevo ticket
+                </button>
+              )}
+            </div>
+            {contenidoMis}
+          </aside>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bf-portal">
       <style>{CSS}</style>
@@ -2771,13 +2836,17 @@ function PortalUsuario({ perfil, onLogout }) {
   );
 }
 
-function FilaPortal({ t, ahora, onAbrir }) {
+function FilaPortal({ t, ahora, seleccionado = false, onAbrir }) {
   const m = metaUsuario(t.estado);
   const esTuya = t.estado === "WAITING_FOR_USER";
   const activo = ESTADOS_ACTIVOS_SET.has(t.estado);
   const quien = t.asignado_nombre ? t.asignado_nombre.split(/\s+/)[0] : "TI";
   return (
-    <button className={`bf-pt-fila${esTuya ? " es-tuya" : ""}`} onClick={onAbrir}>
+    <button
+      className={`bf-pt-fila${esTuya ? " es-tuya" : ""}${seleccionado ? " sel" : ""}`}
+      aria-current={seleccionado ? "true" : undefined}
+      onClick={onAbrir}
+    >
       <div className="bf-pt-fila-top">
         <span className="bf-pt-folio">{t.id}</span>
         <span className={`bf-pt-estado t-${m.tono}`}>{m.label}</span>
@@ -3602,6 +3671,38 @@ const CSS = `
 .bf-pt-msg.ti{align-self:flex-start;background:${C.bg};border-bottom-left-radius:4px}
 .bf-pt-responder{display:flex;flex-direction:column;gap:10px}
 .bf-pt-ok{font-size:13.5px;font-weight:600;color:#2E6E69;text-align:center}
+.bf-pt-fila.sel{border-color:${C.azulDark};box-shadow:0 0 0 1px ${C.azulDark} inset}
+
+/* Computadora (≥ 960 px, ver useEsEscritorio): flujo a la izquierda, Mis tickets al lado */
+.bf-pt-barra{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:16px;height:68px;padding:0 32px;
+  background:#fff;border-bottom:1px solid ${C.border}}
+.bf-pt-quien{display:flex;flex-direction:column;align-items:flex-end;line-height:1.3}
+.bf-pt-quien strong{font-size:14px;color:${C.azulDark}}
+.bf-pt-quien span{font-size:13px;color:#566F6D}
+.bf-pt-escritorio{max-width:1240px;margin:0 auto;padding:28px 32px 48px;display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(340px,400px);gap:28px;align-items:start}
+.bf-pt-principal{background:#fff;border:1px solid ${C.border};border-radius:20px;min-height:calc(100vh - 124px);
+  display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(21,62,62,0.04)}
+.escritorio .bf-pt-cuerpo{padding:28px 36px 36px;gap:24px}
+.escritorio .bf-pt-top.paso{padding:16px 20px 0}
+.escritorio .bf-pt-h1{font-size:30px}
+.escritorio .bf-pt-temas{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.escritorio .bf-pt-tema{padding:20px 18px}
+.escritorio .bf-pt-envio,.escritorio .bf-pt-responder{align-items:flex-start}
+.escritorio .bf-pt-envio .bf-pt-primario,.escritorio .bf-pt-responder .bf-pt-primario{width:auto;min-width:220px;padding:0 32px}
+.escritorio .bf-pt-nota{text-align:left}
+.escritorio .bf-pt-centro{padding-top:12px}
+.escritorio .bf-pt-wa-card,.escritorio .bf-pt-codigo,.escritorio .bf-pt-wa{max-width:520px;width:100%;align-self:center}
+.escritorio .bf-pt-dos{max-width:520px;width:100%;align-self:center}
+.escritorio .bf-pt-meta{grid-template-columns:repeat(4,minmax(0,1fr))}
+.escritorio .bf-pt-msg{max-width:70%}
+.bf-pt-lateral{position:sticky;top:96px;max-height:calc(100vh - 124px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+  padding:2px 2px 8px}
+.bf-pt-lateral-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:40px}
+.bf-pt-lateral-head h2{margin:0;font-size:20px;font-weight:800;letter-spacing:-0.3px;color:${C.azulDark}}
+.bf-pt-nuevo-mini{display:flex;align-items:center;gap:6px;height:40px;padding:0 14px;border:none;border-radius:12px;
+  background:#B9531F;color:#fff;font-size:14px;font-weight:700}
+.bf-pt-nuevo-mini:hover{background:#A3481A}
 
 `;
 
