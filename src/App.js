@@ -118,6 +118,16 @@ const grupoDe = (t) => {
 };
 
 const ESTADOS_ACTIVOS_SET = new Set(["OPEN","ASSIGNED","IN_PROGRESS","WAITING_FOR_USER","REOPENED"]);
+
+// Impacto en la operación; la define el técnico al tomar el ticket. Un ticket
+// nace sin ella y el backend no deja asignarlo ni pasarlo a «En progreso»
+// hasta que la tenga (main.py, _falta_prioridad).
+const PRIORIDADES = [
+  ["detiene", "1. Detiene operación"],
+  ["afecta",  "2. Afecta operación"],
+  ["mejora",  "3. Mejora operación"],
+];
+const BLOQUEA_SIN_PRIORIDAD = new Set(["ASSIGNED", "IN_PROGRESS"]);
 const ESTADOS_TERMINALES_SET = new Set(["RESOLVED","CLOSED"]);
 
 // Transiciones disponibles por estado para mostrar en el dashboard.
@@ -1365,6 +1375,7 @@ function App() {
                               onAbrir={() => { setSelectedId(t.id); window.scrollTo(0, 0); }}
                               onAsignar={asignarTicket}
                               onRecordar={enviarMensaje}
+                              onPatch={patchTicket}
                             />
                           ))}
                         </div>
@@ -1418,8 +1429,9 @@ function App() {
 /* Subcomponentes ------------------------------------------------ */
 /* Fila del grupo enfocado: el tiempo de espera manda y las acciones
    más comunes (tomar, asignar, recordar) no obligan a abrir el detalle. */
-function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbrir, onAsignar, onRecordar }) {
+function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbrir, onAsignar, onRecordar, onPatch }) {
   const [asignando, ejecAsignar] = useAccion();
+  const [cambiandoPrioridad, ejecPrioridad] = useAccion();
   const ms = edadMs(ticket, ahora);
   const color = colorEdad(ms);
   const agente = agentes[ticket.asignado_a];
@@ -1445,7 +1457,23 @@ function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbr
         <p className="bf-fila-texto">{ultimoMensaje(ticket)}</p>
 
         <div className="bf-fila-acciones" onClick={frenar}>
-          {sinDuenio ? (
+          {sinDuenio && !ticket.prioridad ? (
+            <div className="bf-accion-select is-falta">
+              <select
+                value=""
+                disabled={cambiandoPrioridad}
+                onChange={(e) => {
+                  const p = e.target.value;
+                  if (p) ejecPrioridad(() => onPatch(ticket.id, { prioridad: p }));
+                }}
+              >
+                <option value="">{cambiandoPrioridad ? "Guardando…" : "Prioridad…"}</option>
+                {PRIORIDADES.map(([v, label]) => (
+                  <option key={v} value={v}>{label}</option>
+                ))}
+              </select>
+            </div>
+          ) : sinDuenio ? (
             <>
               {miAgenteId && (
                 <BotonAccion
@@ -1516,7 +1544,8 @@ function EstadoBadge({ estado }) {
 function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHistorial = false, ahora = Date.now(), miAgenteId = null, onClose, onAsignar, onTransicionar, onEliminar, onPatch, onEnviarMensaje }) {
   const [notas, setNotas] = useState(ticket.notas_internas || "");
   const [pasos, setPasos] = useState(ticket.pasos_intentados || "");
-  const [prioridad, setPrioridad] = useState(ticket.prioridad || "normal");
+  const [prioridad, setPrioridad] = useState(ticket.prioridad || "");
+  const sinPrioridad = !prioridad;
   const [imgExpanded, setImgExpanded] = useState(null);
   const [msgTexto, setMsgTexto] = useState("");
   const [msgEnviando, setMsgEnviando] = useState(false);
@@ -1599,13 +1628,15 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           <span className="bf-meta-k">Prioridad</span>
           <span className="bf-meta-v bf-meta-v-row">
             <select
-              className="bf-prio-select"
+              className={`bf-prio-select${sinPrioridad ? " is-falta" : ""}`}
               value={prioridad}
               disabled={cambiandoPrioridad}
               onChange={(e) => cambiarPrioridad(e.target.value)}
             >
-              {["baja","normal","alta","urgente"].map((p) => (
-                <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+              {/* Una vez elegida no se regresa a «sin definir» (el backend lo rechaza) */}
+              {sinPrioridad && <option value="" disabled>Sin definir · elígela</option>}
+              {PRIORIDADES.map(([v, label]) => (
+                <option key={v} value={v}>{label}</option>
               ))}
             </select>
             {cambiandoPrioridad && <IcSpinner size={13} className="bf-spin" />}
@@ -1768,6 +1799,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
       <div className="bf-assign">
         <label className="bf-assign-label">
           {ticket.asignado_a ? "Reasignar" : "Tomar el caso"}
+          {sinPrioridad && <span className="bf-falta-prio"> · primero define la prioridad</span>}
           {asignando && (
             <span className="bf-cargando-inline">
               <IcSpinner size={12} className="bf-spin" /> Asignando…
@@ -1779,7 +1811,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           {miAgenteId && agentes[miAgenteId] && (
             <button
               className={`bf-tomar-chip${ticket.asignado_a === miAgenteId ? " is-active" : ""}`}
-              disabled={asignando || ticket.asignado_a === miAgenteId}
+              disabled={asignando || sinPrioridad || ticket.asignado_a === miAgenteId}
               onClick={() => ejecAsignar(() => onAsignar(ticket.id, miAgenteId))}
             >
               <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(miAgenteId) }}>
@@ -1794,7 +1826,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
               <button
                 key={id}
                 className={`bf-tomar-chip${ticket.asignado_a === id ? " is-active" : ""}`}
-                disabled={asignando || ticket.asignado_a === id}
+                disabled={asignando || sinPrioridad || ticket.asignado_a === id}
                 onClick={() => ejecAsignar(() => onAsignar(ticket.id, id))}
               >
                 <span className="bf-avatar bf-avatar-sm" style={{ background: colorPara(id) }}>
@@ -1833,6 +1865,9 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
                 key={estado}
                 className="bf-trans-btn"
                 style={{ "--tc": TRANS_COLOR[estado] || "#5E7B79" }}
+                disabled={sinPrioridad && BLOQUEA_SIN_PRIORIDAD.has(estado)}
+                title={sinPrioridad && BLOQUEA_SIN_PRIORIDAD.has(estado)
+                  ? "Primero define la prioridad" : undefined}
                 onClick={() => onTransicionar(ticket.id, estado)}
               >
                 {label}
@@ -3922,6 +3957,9 @@ const CSS = `
   border:none;background:transparent;color:${C.azulDark};font-size:14px;font-weight:600;
   cursor:pointer;outline:none;font-family:inherit;padding:0;
 }
+.bf-prio-select.is-falta{color:${C.naranja}}
+.bf-falta-prio{color:${C.naranja};font-weight:600}
+.bf-accion-select.is-falta select{border-color:${C.naranja};color:${C.naranja}}
 
 /* Notas internas */
 .bf-notas{margin-bottom:14px}

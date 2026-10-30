@@ -5,7 +5,7 @@ const hace = (min) => new Date(Date.now() - min * 60000).toISOString();
 
 const BASE = {
   id:"BFX-0042", numero:"5214771234567", nombre:"Juan Pérez", estado:"OPEN",
-  asignado_a:null, area:"POUCH", maquina:"POUCH 7", prioridad:"normal", categoria:"💻 Hardware",
+  asignado_a:null, area:"POUCH", maquina:"POUCH 7", prioridad:"mejora", categoria:"💻 Hardware",
   preview:"la 7", fecha:"25/08/2026 12:30", fecha_iso:hace(8),
   fecha_cierre:null, fecha_cierre_iso:null,
   pasos_intentados:null, notas_internas:null, descripcion:null, canal:"whatsapp",

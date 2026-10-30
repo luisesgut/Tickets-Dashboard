@@ -25,7 +25,7 @@ const T_ESPERA = {
   id: "BFX-0247", numero: "", solicitante_email: "laura@bioflex.com",
   nombre: "Laura Ortiz", estado: "WAITING_FOR_USER", asignado_a: "ag_carlos",
   asignado_nombre: "Carlos Méndez", area: "Contabilidad", maquina: null,
-  prioridad: "normal", categoria: "🔑 Accesos", canal: "web",
+  prioridad: "mejora", categoria: "🔑 Accesos", canal: "web",
   descripcion: "No puedo entrar al correo, dice contraseña incorrecta",
   preview: "Bot: ¿El error sale también desde tu celular?",
   fecha: "12/10/2026 09:15", fecha_iso: hace(130),

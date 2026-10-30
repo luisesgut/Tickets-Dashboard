@@ -254,7 +254,11 @@ Consequences to keep in mind when editing:
 
 - `notas` — copy of `ticket.notas_internas`; "Guardar notas" appears when dirty
 - `pasos` — copy of `ticket.pasos_intentados`; "Guardar pasos" appears when dirty
-- `prioridad` — saved immediately on change via `PATCH /tickets/{id}`
+- `prioridad` — saved immediately on change via `PATCH /tickets/{id}`. `""` = not set yet
+  ("Sin definir · elígela", in orange): the take/assign chips and the `ASSIGNED` /
+  `IN_PROGRESS` buttons stay disabled until it's chosen (`BLOQUEA_SIN_PRIORIDAD`); the
+  backend enforces the same rule. In the queue, a row without an owner and without
+  priority shows a "Prioridad…" select instead of "Tomar yo" / "Asignar a…"
 - `imgExpanded` — imagen object for lightbox, `null` when closed
 - `msgTexto` — draft text for direct WhatsApp message
 - `msgEnviando` — bool; disables send button during request
@@ -331,7 +335,7 @@ Base URL: `REACT_APP_API_URL` env var.
   categoria: string,
   descripcion: string | null,
   resumen_ia: string | null,
-  prioridad: "baja" | "normal" | "alta" | "urgente",
+  prioridad: "detiene" | "afecta" | "mejora" | null,   // PRIORIDADES; null = sin definir
   canal: string,               // "whatsapp"
   pasos_intentados: string | null,
   notas_internas: string | null,

@@ -5,27 +5,27 @@ const hace = (min) => new Date(Date.now() - min * 60000).toISOString();
 
 const TICKETS = {
   "BFX-0042": { id:"BFX-0042", numero:"5214771234567", nombre:"Juan Pérez", estado:"OPEN",
-    asignado_a:null, area:"POUCH", maquina:"POUCH 7", prioridad:"normal", categoria:"💻 Hardware",
+    asignado_a:null, area:"POUCH", maquina:"POUCH 7", prioridad:"mejora", categoria:"💻 Hardware",
     preview:"La selladora no calienta y se despegan las bolsas",
     fecha:"25/08/2026 17:52", fecha_iso:hace(8), fecha_cierre:null, fecha_cierre_iso:null,
     pasos_intentados:null, notas_internas:null, descripcion:null, canal:"whatsapp" },
   "BFX-0035": { id:"BFX-0035", numero:"5214779982211", nombre:"María S.", estado:"OPEN",
-    asignado_a:null, area:"BOLSEO", maquina:"BOLSEO 4", prioridad:"alta", categoria:"📋 General",
+    asignado_a:null, area:"BOLSEO", maquina:"BOLSEO 4", prioridad:"afecta", categoria:"📋 General",
     preview:"La bolsa sale chueca y con arrugas",
     fecha:"25/08/2026 11:00", fecha_iso:hace(420), fecha_cierre:null, fecha_cierre_iso:null,
     pasos_intentados:null, notas_internas:null, descripcion:null, canal:"whatsapp" },
   "BFX-0041": { id:"BFX-0041", numero:"5214731376576", nombre:"Ana L.", estado:"IN_PROGRESS",
-    asignado_a:"agente_irving", area:"BOLSEO", maquina:"BOLSEO 18", prioridad:"normal", categoria:"🌐 Red",
+    asignado_a:"agente_irving", area:"BOLSEO", maquina:"BOLSEO 18", prioridad:"mejora", categoria:"🌐 Red",
     preview:"La terminal no enciende, marca error de conexión",
     fecha:"25/08/2026 17:00", fecha_iso:hace(60), fecha_cierre:null, fecha_cierre_iso:null,
     pasos_intentados:null, notas_internas:null, descripcion:null, canal:"whatsapp" },
   "BFX-0040": { id:"BFX-0040", numero:"5214775774189", nombre:"Pedro R.", estado:"WAITING_FOR_USER",
-    asignado_a:"agente_ulises", area:"REFILADO", maquina:"REFILADO 3", prioridad:"normal", categoria:"🖨️ Impresora",
+    asignado_a:"agente_ulises", area:"REFILADO", maquina:"REFILADO 3", prioridad:"mejora", categoria:"🖨️ Impresora",
     preview:"Bot: ¿Ya probaste reiniciar el escáner?",
     fecha:"25/08/2026 16:00", fecha_iso:hace(120), fecha_cierre:null, fecha_cierre_iso:null,
     pasos_intentados:null, notas_internas:null, descripcion:null, canal:"whatsapp" },
   "BFX-0030": { id:"BFX-0030", numero:"5214777349702", nombre:"Sofía G.", estado:"RESOLVED",
-    asignado_a:"agente_luis", area:"POUCH", maquina:"POUCH 1", prioridad:"normal", categoria:"⚙️ Software",
+    asignado_a:"agente_luis", area:"POUCH", maquina:"POUCH 1", prioridad:"mejora", categoria:"⚙️ Software",
     preview:"Ya quedó, gracias",
     fecha:"25/08/2026 09:00", fecha_iso:hace(600), fecha_cierre:"25/08/2026 12:00", fecha_cierre_iso:hace(300),
     pasos_intentados:null, notas_internas:null, descripcion:null, canal:"whatsapp" },
@@ -132,6 +132,26 @@ test("un ticket sin dueño ofrece tomarlo sin abrir el detalle", async () => {
     .toEqual(["Asignar a…", "Ulises Granados", "Irving Coronado", "Luis Espinosa"]);
 });
 
+test("sin prioridad no se puede tomar: la fila pide primero la prioridad", async () => {
+  TICKETS["BFX-0051"] = { ...TICKETS["BFX-0042"], id:"BFX-0051", prioridad:null, fecha_iso:hace(2) };
+  render(<App />);
+  await waitFor(() => expect(grupo("Sin atender")).toBeTruthy());
+
+  const fila = [...grupo("Sin atender").querySelectorAll(".bf-fila")]
+    .find((f) => f.textContent.includes("BFX-0051"));
+  expect(within(fila).queryByText("Tomar yo")).toBeNull();
+  const select = fila.querySelector(".bf-accion-select select");
+  expect([...select.options].map(o => o.textContent)).toEqual(
+    ["Prioridad…", "1. Detiene operación", "2. Afecta operación", "3. Mejora operación"]);
+
+  fireEvent.change(select, { target: { value: "detiene" } });
+  await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+    expect.stringContaining("/tickets/BFX-0051"),
+    expect.objectContaining({ method: "PATCH", body: JSON.stringify({ prioridad: "detiene" }) })));
+
+  delete TICKETS["BFX-0051"];
+});
+
 test("el encabezado avisa cuánto lleva esperando el más viejo", async () => {
   render(<App />);
   await waitFor(() => expect(document.querySelector(".bf-fila-id")).toBeInTheDocument());
@@ -155,7 +175,7 @@ test("un ticket del portal se identifica por correo, no por un '+' vacío", asyn
   // tiene que mostrar algo que identifique a la persona, no un "+" solo.
   TICKETS["BFX-0050"] = { id:"BFX-0050", numero:"", solicitante_email:"laura@bioflex.com",
     nombre:"Laura Ortiz", estado:"OPEN", asignado_a:null, area:"Contabilidad", maquina:null,
-    prioridad:"normal", categoria:"🔑 Accesos", canal:"web",
+    prioridad:"mejora", categoria:"🔑 Accesos", canal:"web",
     preview:"No puedo entrar al correo", descripcion:"No puedo entrar al correo",
     fecha:"12/10/2026 09:15", fecha_iso:hace(5), fecha_cierre:null, fecha_cierre_iso:null,
     pasos_intentados:null, notas_internas:null };
