@@ -259,6 +259,12 @@ Consequences to keep in mind when editing:
   `IN_PROGRESS` buttons stay disabled until it's chosen (`BLOQUEA_SIN_PRIORIDAD`); the
   backend enforces the same rule. In the queue, a row without an owner and without
   priority shows a "Prioridad…" select instead of "Tomar yo" / "Asignar a…"
+- `compromiso` — `ticket.fecha_compromiso` (`"AAAA-MM-DD"` or `""`), saved on change through a
+  native `<input type="date">`; the ✕ clears it (`null`). **Compare it as text against
+  `hoyLocal()`, never via `new Date("AAAA-MM-DD")`** — that parses as UTC midnight and in Mexico
+  lands on the previous day. `estadoCompromiso(t)` → `vencida` (red) / `hoy` (orange) /
+  `pendiente`; terminal tickets never show as overdue. The queue row shows it as the
+  `.bf-compromiso` chip next to the area. Tests: `Compromiso.test.js`
 - `imgExpanded` — imagen object for lightbox, `null` when closed
 - `msgTexto` — draft text for direct WhatsApp message
 - `msgEnviando` — bool; disables send button during request
@@ -309,7 +315,7 @@ Base URL: `REACT_APP_API_URL` env var.
 | GET/POST/PATCH | `/areas-cuenta` | Area catalog; reads for anyone, changes admin only |
 | GET | `/tickets` | `?estado&prioridad&page&limit` — **IT only (403 for `rol: usuario`)** |
 | GET | `/tickets/:id` | Single ticket + `imagenes: [{id, mime_type, analisis, fecha}]` |
-| PATCH | `/tickets/:id` | `notas_internas`, `prioridad`, `resumen_ia`, `pasos_intentados` |
+| PATCH | `/tickets/:id` | `notas_internas`, `prioridad`, `resumen_ia`, `pasos_intentados`, `fecha_compromiso` (`"AAAA-MM-DD"` or `null`) |
 | POST | `/tickets/:id/transicion` | `{estado, actor?, notas?}` |
 | GET | `/tickets/:id/eventos` | Audit log |
 | PUT | `/tickets/:id/cerrar` | → RESOLVED + user notification |
@@ -346,6 +352,7 @@ Base URL: `REACT_APP_API_URL` env var.
   asignado_a: string | null,   // agente id
   fecha: string,               // "dd/mm/yyyy HH:MM"
   fecha_cierre: string | null,
+  fecha_compromiso: string | null,  // "AAAA-MM-DD" — a calendar day, no time
   imagenes?: [{ id: number, mime_type: string, analisis: string, fecha: string }]  // only on GET /tickets/:id
 }
 ```

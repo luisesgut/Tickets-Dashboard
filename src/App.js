@@ -99,6 +99,29 @@ const textoEdad = (ms) => {
 const colorEdad = (ms) =>
   ms == null ? "#90A6A4" : ESCALA_EDAD.find((n) => ms < n.max).color;
 
+// Fecha compromiso: el backend la manda como "AAAA-MM-DD" (un día, sin hora).
+// Se compara como texto contra el día LOCAL del navegador: con new Date("AAAA-MM-DD")
+// se leería como medianoche UTC y en México caería el día anterior.
+const hoyLocal = (ahora = Date.now()) => {
+  const d = new Date(ahora);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+const textoCompromiso = (iso) => {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("es-MX", { day: "numeric", month: "short" });
+};
+
+// "vencida" | "hoy" | "pendiente" | null. Un ticket ya resuelto no vence.
+const estadoCompromiso = (t, ahora = Date.now()) => {
+  if (!t?.fecha_compromiso || !ESTADOS_ACTIVOS_SET.has(t.estado)) return null;
+  const hoy = hoyLocal(ahora);
+  if (t.fecha_compromiso < hoy) return "vencida";
+  return t.fecha_compromiso === hoy ? "hoy" : "pendiente";
+};
+
 
 const esDeHoy = (iso) => {
   if (!iso) return false;
@@ -280,6 +303,17 @@ const IcClock = (p) => (
       <>
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v5l3 2" />
+      </>
+    }
+  />
+);
+const IcCalendar = (p) => (
+  <Icon
+    {...p}
+    d={
+      <>
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M16 3v4M8 3v4M3 10h18" />
       </>
     }
   />
@@ -1450,6 +1484,16 @@ function FilaExpandida({ ticket, agentes, ahora, seleccionado, miAgenteId, onAbr
               {ticket.area}
             </span>
           )}
+          {ticket.fecha_compromiso && (
+            <span
+              className={`bf-compromiso is-${estadoCompromiso(ticket, ahora) || "cerrado"}`}
+              title={`Fecha compromiso: ${textoCompromiso(ticket.fecha_compromiso)}`}
+            >
+              <IcCalendar size={11} />
+              {estadoCompromiso(ticket, ahora) === "vencida" ? "Vencida · " : ""}
+              {estadoCompromiso(ticket, ahora) === "hoy" ? "Hoy" : textoCompromiso(ticket.fecha_compromiso)}
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           <span className="bf-fila-edad" style={{ color }}>{textoEdad(ms)}</span>
         </div>
@@ -1555,6 +1599,13 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
   // Los <select> no pasan por BotonAccion, así que llevan su propio estado.
   const [asignando, ejecAsignar] = useAccion();
   const [cambiandoPrioridad, ejecPrioridad] = useAccion();
+  const [compromiso, setCompromiso] = useState(ticket.fecha_compromiso || "");
+  const [cambiandoCompromiso, ejecCompromiso] = useAccion();
+  const cambiarCompromiso = (valor) => {
+    setCompromiso(valor);
+    return ejecCompromiso(() => onPatch(ticket.id, { fecha_compromiso: valor || null }));
+  };
+  const edoCompromiso = estadoCompromiso({ ...ticket, fecha_compromiso: compromiso }, ahora);
 
   const guardarNotas = () => onPatch(ticket.id, { notas_internas: notas });
   const guardarPasos = () => onPatch(ticket.id, { pasos_intentados: pasos });
@@ -1624,7 +1675,7 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           <span className="bf-meta-k">Canal</span>
           <span className="bf-meta-v" style={{ textTransform: "capitalize" }}>{ticket.canal || "whatsapp"}</span>
         </div>
-        <div className="bf-meta" style={{ gridColumn: "span 3" }}>
+        <div className="bf-meta" style={{ gridColumn: "span 2" }}>
           <span className="bf-meta-k">Prioridad</span>
           <span className="bf-meta-v bf-meta-v-row">
             <select
@@ -1641,6 +1692,37 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
             </select>
             {cambiandoPrioridad && <IcSpinner size={13} className="bf-spin" />}
           </span>
+        </div>
+        <div className="bf-meta">
+          <span className="bf-meta-k"><IcCalendar size={13} /> Compromiso</span>
+          <span className="bf-meta-v bf-meta-v-row">
+            <input
+              type="date"
+              aria-label="Fecha compromiso"
+              className={`bf-compromiso-input${edoCompromiso ? ` is-${edoCompromiso}` : ""}`}
+              value={compromiso}
+              disabled={cambiandoCompromiso}
+              onChange={(e) => cambiarCompromiso(e.target.value)}
+            />
+            {cambiandoCompromiso && <IcSpinner size={13} className="bf-spin" />}
+            {compromiso && !cambiandoCompromiso && (
+              <button
+                type="button"
+                className="bf-compromiso-quitar"
+                aria-label="Quitar fecha compromiso"
+                title="Quitar fecha"
+                onClick={() => cambiarCompromiso("")}
+              >
+                <IcX size={12} />
+              </button>
+            )}
+          </span>
+          {edoCompromiso === "vencida" && (
+            <span className="bf-meta-sub" style={{ color: C.rojo, fontWeight: 600 }}>Vencida</span>
+          )}
+          {edoCompromiso === "hoy" && (
+            <span className="bf-meta-sub" style={{ color: C.naranja, fontWeight: 600 }}>Vence hoy</span>
+          )}
         </div>
       </div>
 
@@ -3813,6 +3895,9 @@ const CSS = `
 .bf-fila-id{font-size:13px;font-weight:800;color:${C.azulDark};letter-spacing:-0.2px}
 .bf-fila-maq{font-size:10.5px;font-weight:800;letter-spacing:.4px;border-radius:5px;padding:2px 7px}
 .bf-fila-edad{font-size:15px;font-weight:800;letter-spacing:-0.3px}
+.bf-compromiso{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;border-radius:5px;padding:2px 7px;color:${C.textMuted};background:${C.textMuted}14;white-space:nowrap}
+.bf-compromiso.is-hoy{color:${C.naranja};background:${C.naranja}14}
+.bf-compromiso.is-vencida{color:${C.rojo};background:${C.rojo}14}
 .bf-fila-texto{
   font-size:12.5px;color:#3E5C5A;margin-top:5px;line-height:1.4;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -3958,6 +4043,11 @@ const CSS = `
   cursor:pointer;outline:none;font-family:inherit;padding:0;
 }
 .bf-prio-select.is-falta{color:${C.naranja}}
+.bf-compromiso-input{border:none;background:transparent;color:${C.azulDark};font-size:14px;font-weight:600;font-family:inherit;padding:0;outline:none;cursor:pointer;min-width:0}
+.bf-compromiso-input.is-hoy{color:${C.naranja}}
+.bf-compromiso-input.is-vencida{color:${C.rojo}}
+.bf-compromiso-quitar{display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:${C.textFaint};cursor:pointer;padding:2px;border-radius:4px}
+.bf-compromiso-quitar:hover{color:${C.rojo};background:${C.urgentBg}}
 .bf-falta-prio{color:${C.naranja};font-weight:600}
 .bf-accion-select.is-falta select{border-color:${C.naranja};color:${C.naranja}}
 
