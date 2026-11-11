@@ -106,7 +106,7 @@ asserts the portal never touches an IT endpoint (filtering out `/mi/*`, which al
 | `TRANS_COLOR` | Maps target estado → button accent color |
 | `ESTADOS_ACTIVOS_SET` | Set of active states: OPEN, ASSIGNED, IN_PROGRESS, WAITING_FOR_USER, REOPENED |
 | `ESTADOS_TERMINALES_SET` | Set of terminal states: RESOLVED, CLOSED |
-| `TEMPLATES_RAPIDOS` | Array of `{label, texto}` quick-reply templates for direct WhatsApp messaging |
+| `TEMPLATES_RAPIDOS` | Array of `{label, texto}` quick-reply templates for direct WhatsApp messaging. **Never add one that says the case is resolved** — that's what *Resolver y avisar* is for (see below) |
 
 ### Loading states (required for every endpoint call)
 
@@ -249,6 +249,21 @@ Consequences to keep in mind when editing:
 - `notifGranted` — bool; true if Notification permission is granted
 - `prevTicketIds` — Set of ticket IDs from last poll (for new-ticket detection)
 - `initialLoadDone` — bool; prevents notifications on first load
+
+### Resolving from the detail (2026-11-11, Luis)
+
+- **State buttons sit right under the header** (`.bf-transitions`), not at the bottom after notes
+  and images where nobody found them. `principal` (Resolver → Iniciar/Retomar → Reabrir, the first
+  available) is filled; the rest are outlined.
+- **Resolver y avisar** sits next to *Enviar* in the direct-message box whenever RESOLVED is an
+  available transition. It calls `onTransicionar(id, "RESOLVED", msgTexto, actor)`: the backend
+  sends the bot's resolved notice (folio + topic + *Sí, gracias / Sigue igual*) with the typed
+  text as the technician's note. "Sí, gracias" then closes the ticket and starts the survey — so
+  **resolve, don't close**: closing directly skips the user's confirmation and the survey.
+- Removed the quick replies "¿Ya funcionó?" and "Caso resuelto": loose text with no folio that
+  left the ticket open; with several open tickets the user couldn't tell which one, and their
+  "sí" landed in another ticket. Tests: `Resolver.test.js`.
+- `transicionarTicket(id, estado, notas?, actor?)` — `actor` defaults to `"dashboard"`.
 
 ### DetalleTicket local state
 

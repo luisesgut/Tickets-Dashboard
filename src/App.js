@@ -183,10 +183,12 @@ const CALIFICACION_UI = { bien: "😀 Bien", regular: "😐 Regular", mal: "😞
 
 const TEMPLATES_RAPIDOS = [
   { label: "En atención",   texto: "Hola, tu caso ya está siendo atendido por nuestro equipo de TI. Te contactamos en breve. 👍" },
-  { label: "¿Ya funcionó?", texto: "¿Pudiste resolver el problema? Por favor confirma para poder cerrar tu caso. ✅" },
   { label: "Reinicia equipo", texto: "Por favor reinicia tu equipo y vuelve a intentarlo. Si el problema persiste, avísanos." },
-  { label: "Caso resuelto", texto: "Tu caso ha sido resuelto. Si el problema vuelve a ocurrir, responde este mensaje y con gusto te ayudamos. 🙌" },
 ];
+// «¿Ya funcionó?» y «Caso resuelto» eran texto suelto: el usuario leía
+// «resuelto» sin folio, el ticket seguía abierto y su «sí» caía en otro ticket.
+// Ahora eso es «Resolver y avisar» (transición a RESOLVED): el aviso del bot
+// lleva folio, tema y los botones ¿Quedó bien?.
 
 const TITULOS = {
   sin_atender: "Sin atender",
@@ -742,13 +744,15 @@ function App() {
   }, [ticketDetalle, selectedId]);
 
   // ── Acciones sobre tickets ────────────────────────────────────
-  const transicionarTicket = async (ticketId, nuevoEstado) => {
+  const transicionarTicket = async (ticketId, nuevoEstado, notas = null, actor = null) => {
     const currentToken = localStorage.getItem("bf_token");
     try {
       await fetch(`${API}/tickets/${ticketId}/transicion`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${currentToken}` },
-        body: JSON.stringify({ estado: nuevoEstado, actor: "dashboard" }),
+        // Al resolver, `notas` viaja en el aviso al usuario («_Irving:_ ya quedó…»)
+        body: JSON.stringify({ estado: nuevoEstado, actor: actor || "dashboard",
+                               ...(notas ? { notas } : {}) }),
       });
       await Promise.all([fetchData(), fetchAuditLog(ticketId)]);
     } catch (e) {
@@ -1596,6 +1600,9 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
   const [msgFeedback, setMsgFeedback] = useState(null); // "ok" | "error"
   const agente = agentes[ticket.asignado_a];
   const transiciones = TRANSICIONES_UI[ticket.estado] || [];
+  // La acción que más se usa en cada estado va rellena; las demás, delineadas.
+  const principal = ["RESOLVED", "IN_PROGRESS", "REOPENED"]
+    .find((e) => transiciones.some((t) => t.estado === e));
   // Los <select> no pasan por BotonAccion, así que llevan su propio estado.
   const [asignando, ejecAsignar] = useAccion();
   const [cambiandoPrioridad, ejecPrioridad] = useAccion();
@@ -1612,6 +1619,13 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
   const cambiarPrioridad = (p) => {
     setPrioridad(p);
     return ejecPrioridad(() => onPatch(ticket.id, { prioridad: p }));
+  };
+
+  const puedeResolver = transiciones.some((t) => t.estado === "RESOLVED");
+  const resolverYAvisar = async () => {
+    const actor = agente ? agente.nombre : (localStorage.getItem("bf_nombre") || "TI");
+    await onTransicionar(ticket.id, "RESOLVED", msgTexto.trim() || null, actor);
+    setMsgTexto("");
   };
 
   const enviar = async (texto) => {
@@ -1646,6 +1660,28 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
             .filter(Boolean).join(" · ")}
         </p>
       </div>
+
+      {/* Transiciones de estado: arriba, a la vista. Antes vivían al fondo del
+          detalle, después de notas e imágenes, y nadie las encontraba. */}
+      {transiciones.length > 0 && (
+        <div className="bf-transitions">
+          <div className="bf-trans-btns">
+            {transiciones.map(({ estado, label }) => (
+              <BotonAccion
+                key={estado}
+                className={`bf-trans-btn${estado === principal ? " is-principal" : ""}`}
+                style={{ "--tc": TRANS_COLOR[estado] || "#5E7B79" }}
+                disabled={sinPrioridad && BLOQUEA_SIN_PRIORIDAD.has(estado)}
+                title={sinPrioridad && BLOQUEA_SIN_PRIORIDAD.has(estado)
+                  ? "Primero define la prioridad" : undefined}
+                onClick={() => onTransicionar(ticket.id, estado)}
+              >
+                {label}
+              </BotonAccion>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Meta grid */}
       <div className="bf-meta-grid">
@@ -1818,16 +1854,35 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
             placeholder="Escribe un mensaje personalizado… (Cmd+Enter para enviar)"
             rows={2}
           />
-          <BotonAccion
-            className="bf-msg-send-btn"
-            onClick={() => enviar()}
-            disabled={!msgTexto.trim() || msgEnviando}
-            cargandoTexto="Enviando…"
-          >
-            <IcSend size={15} />
-            Enviar
-          </BotonAccion>
+          <div className="bf-msg-compose-acciones">
+            {puedeResolver && (
+              <BotonAccion
+                className="bf-msg-resolver-btn"
+                onClick={resolverYAvisar}
+                disabled={msgEnviando}
+                cargandoTexto="Resolviendo…"
+                title="Marca el ticket como resuelto. Al usuario le llega con folio y los botones ¿Quedó bien?; lo que escribiste va como nota."
+              >
+                <IcCheck size={15} />
+                Resolver y avisar
+              </BotonAccion>
+            )}
+            <BotonAccion
+              className="bf-msg-send-btn"
+              onClick={() => enviar()}
+              disabled={!msgTexto.trim() || msgEnviando}
+              cargandoTexto="Enviando…"
+            >
+              <IcSend size={15} />
+              Enviar
+            </BotonAccion>
+          </div>
         </div>
+        {puedeResolver && (
+          <p className="bf-msg-ayuda">
+            <b>Resolver y avisar</b>: el usuario recibe el folio con los botones <i>Sí, gracias / Sigue igual</i>; si confirma, el ticket se cierra solo. Lo que escribas arriba va como nota.
+          </p>
+        )}
 
         {msgFeedback === "ok" && <p className="bf-msg-ok">Mensaje enviado ✓</p>}
         {msgFeedback === "error" && <p className="bf-msg-err">Error al enviar. Verifica la conexión.</p>}
@@ -1936,28 +1991,6 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
           </BotonAccion>
         )}
       </div>
-
-      {/* Transiciones de estado */}
-      {transiciones.length > 0 && (
-        <div className="bf-transitions">
-          <label className="bf-assign-label">Cambiar estado</label>
-          <div className="bf-trans-btns">
-            {transiciones.map(({ estado, label }) => (
-              <BotonAccion
-                key={estado}
-                className="bf-trans-btn"
-                style={{ "--tc": TRANS_COLOR[estado] || "#5E7B79" }}
-                disabled={sinPrioridad && BLOQUEA_SIN_PRIORIDAD.has(estado)}
-                title={sinPrioridad && BLOQUEA_SIN_PRIORIDAD.has(estado)
-                  ? "Primero define la prioridad" : undefined}
-                onClick={() => onTransicionar(ticket.id, estado)}
-              >
-                {label}
-              </BotonAccion>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Auditoría */}
       {auditLog.length > 0 && (
@@ -4085,11 +4118,21 @@ const CSS = `
 }
 .bf-msg-send-btn:hover:not(:disabled){background:#bb5526}
 .bf-msg-send-btn:disabled{opacity:.45;cursor:default}
+.bf-msg-compose-acciones{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.bf-msg-compose-acciones .bf-msg-send-btn{align-self:auto}
+.bf-msg-resolver-btn{
+  display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:10px;
+  border:1.5px solid ${C.doneText};background:transparent;color:${C.doneText};
+  font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;
+}
+.bf-msg-resolver-btn:hover:not(:disabled){background:${C.doneText};color:#fff}
+.bf-msg-resolver-btn:disabled{opacity:.45;cursor:default}
+.bf-msg-ayuda{font-size:11.5px;color:${C.textMuted};margin-top:6px;line-height:1.45}
 .bf-msg-ok{font-size:12px;color:${C.doneText};font-weight:600}
 .bf-msg-err{font-size:12px;color:${C.rojo};font-weight:600}
 
 /* Transiciones de estado */
-.bf-transitions{margin-bottom:14px}
+.bf-transitions{margin:-6px 0 16px}
 .bf-trans-btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:0}
 .bf-trans-btn{
   padding:8px 16px;border-radius:10px;border:1.5px solid var(--tc);
@@ -4097,6 +4140,9 @@ const CSS = `
   cursor:pointer;font-family:inherit;transition:background .15s,color .15s;
 }
 .bf-trans-btn:hover{background:var(--tc);color:#fff}
+.bf-trans-btn.is-principal{background:var(--tc);color:#fff}
+.bf-trans-btn.is-principal:hover:not(:disabled){filter:brightness(1.1)}
+.bf-trans-btn:disabled{opacity:.45;cursor:default}
 
 /* Auditoría */
 .bf-audit-list{display:flex;flex-direction:column;gap:0;border-left:2px solid ${C.border};margin-left:6px;padding-left:16px;margin-bottom:8px}
