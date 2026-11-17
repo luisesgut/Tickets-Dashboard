@@ -143,27 +143,29 @@ const grupoDe = (t) => {
 const ESTADOS_ACTIVOS_SET = new Set(["OPEN","ASSIGNED","IN_PROGRESS","WAITING_FOR_USER","REOPENED"]);
 
 // Impacto en la operación; la define el técnico al tomar el ticket. Un ticket
-// nace sin ella y el backend no deja asignarlo ni pasarlo a «En progreso»
-// hasta que la tenga (main.py, _falta_prioridad).
+// nace sin ella y el backend no deja asignarlo, pasarlo a «En progreso» ni
+// resolverlo hasta que la tenga (main.py, _falta_prioridad).
 const PRIORIDADES = [
   ["detiene", "1. Detiene operación"],
   ["afecta",  "2. Afecta operación"],
   ["mejora",  "3. Mejora operación"],
 ];
-const BLOQUEA_SIN_PRIORIDAD = new Set(["ASSIGNED", "IN_PROGRESS"]);
+const BLOQUEA_SIN_PRIORIDAD = new Set(["ASSIGNED", "IN_PROGRESS", "RESOLVED"]);
 const ESTADOS_TERMINALES_SET = new Set(["RESOLVED","CLOSED"]);
 
 // Transiciones disponibles por estado para mostrar en el dashboard.
+// «Resolver» está en TODO estado activo (OPEN y REOPENED incluidos, 2026-11-17):
+// un ticket reabierto ya no obliga a «Retomar» para poder resolverlo.
 // OPEN y ASSIGNED ahora ofrecen "Pedir más info": en la mesa real se pregunta
 // antes de empezar a trabajar, y el backend acepta esa transición.
 const TRANSICIONES_UI = {
-  OPEN:             [{ estado:"ASSIGNED",         label:"Asignar" }, { estado:"IN_PROGRESS", label:"Iniciar" }, { estado:"WAITING_FOR_USER", label:"Pedir más info" }, { estado:"CLOSED", label:"Archivar" }],
+  OPEN:             [{ estado:"ASSIGNED",         label:"Asignar" }, { estado:"IN_PROGRESS", label:"Iniciar" }, { estado:"WAITING_FOR_USER", label:"Pedir más info" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
   ASSIGNED:         [{ estado:"IN_PROGRESS",      label:"Iniciar atención" }, { estado:"WAITING_FOR_USER", label:"Pedir más info" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
   IN_PROGRESS:      [{ estado:"WAITING_FOR_USER", label:"Pedir más info" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
   WAITING_FOR_USER: [{ estado:"IN_PROGRESS",      label:"Retomar" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
   RESOLVED:         [{ estado:"REOPENED",         label:"Reabrir" }, { estado:"CLOSED", label:"Archivar" }],
   CLOSED:           [{ estado:"REOPENED",         label:"Reabrir" }],
-  REOPENED:         [{ estado:"IN_PROGRESS",      label:"Retomar" }, { estado:"ASSIGNED", label:"Asignar" }, { estado:"CLOSED", label:"Archivar" }],
+  REOPENED:         [{ estado:"IN_PROGRESS",      label:"Retomar" }, { estado:"ASSIGNED", label:"Asignar" }, { estado:"RESOLVED", label:"Resolver" }, { estado:"CLOSED", label:"Archivar" }],
   abierto:          [{ estado:"RESOLVED",         label:"Resolver" }],
   cerrado:          [{ estado:"REOPENED",         label:"Reabrir" }],
 };
@@ -1859,9 +1861,10 @@ function DetalleTicket({ ticket, agentes, auditLog, imagenes = [], cargandoHisto
               <BotonAccion
                 className="bf-msg-resolver-btn"
                 onClick={resolverYAvisar}
-                disabled={msgEnviando}
+                disabled={msgEnviando || sinPrioridad}
                 cargandoTexto="Resolviendo…"
-                title="Marca el ticket como resuelto. Al usuario le llega con folio y los botones ¿Quedó bien?; lo que escribiste va como nota."
+                title={sinPrioridad ? "Primero define la prioridad"
+                  : "Marca el ticket como resuelto. Al usuario le llega con folio y los botones ¿Quedó bien?; lo que escribiste va como nota."}
               >
                 <IcCheck size={15} />
                 Resolver y avisar

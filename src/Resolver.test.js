@@ -13,9 +13,11 @@ const TICKET = {
 const AGENTES = { agente_irving: { nombre: "Irving Coronado", whatsapp: "524731376576", activo: true } };
 
 let posts;
+let ticket;
 
 beforeEach(() => {
   posts = [];
+  ticket = TICKET;
   localStorage.setItem("bf_token", "tok");
   global.fetch = jest.fn((url, opts = {}) => {
     const u = String(url);
@@ -24,8 +26,8 @@ beforeEach(() => {
       : u.includes("/tickets/version") ? { v: "1" }
       : u.includes("/agentes") ? AGENTES
       : u.includes("/eventos") ? { eventos: [] }
-      : u.match(/\/tickets\/BFX-/) ? { ...TICKET, historial: [], imagenes: [] }
-      : u.includes("/tickets") ? { tickets: { [TICKET.id]: TICKET }, total: 1, page: 1, pages: 1 }
+      : u.match(/\/tickets\/BFX-/) ? { ...ticket, historial: [], imagenes: [] }
+      : u.includes("/tickets") ? { tickets: { [ticket.id]: ticket }, total: 1, page: 1, pages: 1 }
       : {};
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(json) });
   });
@@ -66,4 +68,25 @@ test("ya no hay respuestas rápidas que digan «resuelto» sin resolver, y los e
   // La barra de estados aparece antes que la ficha del ticket
   expect(barra.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(barra.querySelector(".is-principal").textContent).toBe("Resolver");
+});
+
+test("un ticket REABIERTO se puede resolver sin «Retomar» antes", async () => {
+  ticket = { ...TICKET, estado: "REOPENED" };
+  await abrirTicket();
+  const barra = document.querySelector(".bf-transitions");
+  expect(barra.querySelector(".is-principal").textContent).toBe("Resolver");
+  fireEvent.click(screen.getByRole("button", { name: /Resolver y avisar/ }));
+  await waitFor(() => expect(posts).toContainEqual({
+    url: expect.stringContaining("/tickets/BFX-0057/transicion"),
+    body: expect.objectContaining({ estado: "RESOLVED" }),
+  }));
+});
+
+test("sin prioridad no se puede resolver: los dos botones quedan deshabilitados", async () => {
+  ticket = { ...TICKET, prioridad: null };
+  await abrirTicket();
+  const barra = document.querySelector(".bf-transitions");
+  const resolver = [...barra.querySelectorAll("button")].find((b) => b.textContent === "Resolver");
+  expect(resolver).toBeDisabled();
+  expect(screen.getByRole("button", { name: /Resolver y avisar/ })).toBeDisabled();
 });

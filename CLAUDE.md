@@ -264,6 +264,12 @@ Consequences to keep in mind when editing:
   left the ticket open; with several open tickets the user couldn't tell which one, and their
   "sí" landed in another ticket. Tests: `Resolver.test.js`.
 - `transicionarTicket(id, estado, notas?, actor?)` — `actor` defaults to `"dashboard"`.
+- **Resolver is available in every active state** (2026-11-17), `OPEN` and `REOPENED` included —
+  a reopened ticket used to need *Retomar* first. Needs the backend's `TRANSICIONES_VALIDAS` change
+  (deploy **backend first**, or the button answers «transición inválida»).
+- **Resolving needs a priority too** (2026-11-17): `RESOLVED` is in `BLOQUEA_SIN_PRIORIDAD`, so
+  *Resolver* and *Resolver y avisar* stay disabled while it's «Sin definir»; the backend enforces it
+  in `/transicion` and `/cerrar`.
 
 ### DetalleTicket local state
 
