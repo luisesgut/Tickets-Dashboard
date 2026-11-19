@@ -541,7 +541,7 @@ function App() {
   const [vista, setVista] = useState("tickets"); // "tickets" | "sin_ticket" | "uso" | "cuentas" | "config"
   // Conversaciones que se quedaron sin ticket (la persona ya no contestó al bot)
   const [sinTicket, setSinTicket] = useState([]);
-  const prevSinTicket = useRef(null); // números vistos, para avisar de los nuevos
+  const prevSinTicket = useRef(null); // numero → ultimo_iso visto, para avisar de nuevos y respuestas
   const [tickets, setTickets] = useState({});
   const [agentes, setAgentes] = useState({});
   const [selectedId, setSelectedId] = useState(null);
@@ -860,17 +860,25 @@ function App() {
       const r = await fetch(`${API}/sin-ticket`, { headers: { Authorization: `Bearer ${t}` } });
       if (!r.ok) return; // backend sin esta sección todavía
       const lista = (await r.json()).conversaciones || [];
-      // Igual que con un ticket nuevo: aviso del navegador para las que acaban de aparecer
+      // Igual que con un ticket nuevo: aviso del navegador para las que acaban
+      // de aparecer, y para quien contestó lo que TI le preguntó.
       if (prevSinTicket.current && notifGranted.current) {
-        lista.filter((c) => !prevSinTicket.current.has(c.numero)).forEach((c) => {
-          new Notification("Conversación sin ticket", {
-            body: `${c.nombre || c.numero} le escribió al bot y se quedó sin ticket`,
-            icon: "/favicon.ico",
-            tag: `sin-ticket-${c.numero}`,
-          });
+        lista.forEach((c) => {
+          const antes = prevSinTicket.current.get(c.numero);
+          const ultimo = c.mensajes[c.mensajes.length - 1];
+          if (!antes) {
+            new Notification("Conversación sin ticket", {
+              body: `${c.nombre || c.numero} le escribió al bot y se quedó sin ticket`,
+              icon: "/favicon.ico", tag: `sin-ticket-${c.numero}`,
+            });
+          } else if (antes !== c.ultimo_iso && c.ti_conversa && ultimo?.role === "user") {
+            new Notification(`${c.nombre || c.numero} respondió`, {
+              body: ultimo.content.slice(0, 120), icon: "/favicon.ico", tag: `sin-ticket-${c.numero}`,
+            });
+          }
         });
       }
-      prevSinTicket.current = new Set(lista.map((c) => c.numero));
+      prevSinTicket.current = new Map(lista.map((c) => [c.numero, c.ultimo_iso]));
       setSinTicket(lista);
     } catch (e) {
       console.error("Error al cargar «Sin ticket»", e);
@@ -891,6 +899,18 @@ function App() {
     setVista("tickets");
     setFiltro("sin_atender");
     setSelectedId(data.ticket.id);
+    return data;
+  };
+
+  const mensajeSinTicket = async (numero, texto) => {
+    const t = localStorage.getItem("bf_token");
+    const r = await fetch(`${API}/sin-ticket/${encodeURIComponent(numero)}/mensaje`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+      body: JSON.stringify({ texto, actor: localStorage.getItem("bf_nombre") || "TI" }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (data.ok) await fetchSinTicket();
     return data;
   };
 
@@ -1427,6 +1447,7 @@ function App() {
             ahora={ahora}
             onCrear={crearDesdeConversacion}
             onDescartar={descartarConversacion}
+            onMensaje={mensajeSinTicket}
           />
         ) : vista === "uso" && perfil?.rol === "admin" ? (
           <GestorUso />
@@ -2502,9 +2523,28 @@ function FotoAuth({ id, alt, className, onClick }) {
 
 const SIN_DESCRIPCION = "(No describió el problema)";
 
-function TarjetaSinTicket({ c, ahora, onCrear, onDescartar }) {
+// «[Irving] ¿Qué programa es?» → lo escribió alguien de TI desde el dashboard
+const deTI = (m) => m.role !== "user" && /^\[[^\]]+\] /.test(m.content);
+
+function TarjetaSinTicket({ c, ahora, onCrear, onDescartar, onMensaje }) {
   const sugerida = c.descripcion_sugerida === SIN_DESCRIPCION ? "" : (c.descripcion_sugerida || "");
   const [descripcion, setDescripcion] = useState(sugerida);
+  // Mientras TI no la toque, la descripción sigue a la conversación: si la
+  // persona contesta lo que se le preguntó, la sugerencia ya lo trae.
+  const [descTocada, setDescTocada] = useState(false);
+  useEffect(() => { if (!descTocada) setDescripcion(sugerida); }, [sugerida]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [pregunta, setPregunta] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const ultimo = c.mensajes[c.mensajes.length - 1];
+  const habloTI = c.mensajes.some(deTI);
+  const estadoTI = !habloTI ? null : ultimo && deTI(ultimo) ? "espera" : ultimo?.role === "user" ? "respondio" : null;
+  const enviar = async () => {
+    if (!pregunta.trim()) return;
+    setErrorMsg("");
+    const r = await onMensaje(c.numero, pregunta.trim());
+    if (r?.ok) setPregunta("");
+    else setErrorMsg(r?.error || "No se pudo enviar.");
+  };
   const [area, setArea] = useState(c.area || "");
   const [error, setError] = useState("");
   const [foto, setFoto] = useState(null);
@@ -2533,19 +2573,24 @@ function TarjetaSinTicket({ c, ahora, onCrear, onDescartar }) {
             </span>
           </div>
         </div>
+        {estadoTI === "respondio" && <span className="bf-st-chip is-respondio">Respondió</span>}
+        {estadoTI === "espera" && <span className="bf-st-chip">Esperando su respuesta</span>}
         <span className="bf-st-hace" title={c.ultimo_iso}>último mensaje hace {hace}</span>
       </header>
 
       <div className="bf-chat bf-scroll bf-st-chat">
         {c.mensajes.map((m, i) => {
           const isUser = m.role === "user";
+          const ti = deTI(m);
+          const autor = isUser ? "Empleado" : ti ? `${m.content.slice(1, m.content.indexOf("]"))} · TI` : "Bot Bioflex";
+          const texto = ti ? m.content.slice(m.content.indexOf("]") + 2) : m.content;
           return (
             <div key={i} className={`bf-msg-row ${isUser ? "is-user" : "is-bot"}`}>
-              <div className={`bf-bubble ${isUser ? "is-user" : "is-bot"}`}>
+              <div className={`bf-bubble ${isUser ? "is-user" : "is-bot"}${ti ? " is-ti" : ""}`}>
                 <span className="bf-bubble-author">
-                  {isUser ? "Empleado" : "Bot Bioflex"} · {m.fecha.slice(0, 5)} {m.fecha.slice(-5)}
+                  {autor} · {m.fecha.slice(0, 5)} {m.fecha.slice(-5)}
                 </span>
-                <WaText text={m.content} />
+                <WaText text={texto} />
               </div>
             </div>
           );
@@ -2568,6 +2613,29 @@ function TarjetaSinTicket({ c, ahora, onCrear, onDescartar }) {
         </div>
       )}
 
+      {/* Preguntarle lo que falta, ahí mismo */}
+      <div className="bf-st-preguntar">
+        <label className="bf-assign-label" htmlFor={`st-msg-${c.numero}`}>Preguntarle por WhatsApp</label>
+        <div className="bf-st-fila">
+          <textarea
+            id={`st-msg-${c.numero}`}
+            className="bf-notas-area bf-st-msg"
+            rows={2}
+            value={pregunta}
+            placeholder="¿Qué necesitas? Cuéntame qué está fallando…"
+            onChange={(e) => setPregunta(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) enviar(); }}
+          />
+          <BotonAccion className="bf-msg-send-btn" onClick={enviar} disabled={!pregunta.trim()} cargandoTexto="Enviando…">
+            <IcSend size={15} /> Enviar
+          </BotonAccion>
+        </div>
+        {errorMsg && <p className="bf-msg-err">{errorMsg}</p>}
+        <p className="bf-msg-ayuda">
+          Mientras esperas su respuesta el bot no le contesta nada: lo que escriba aparece aquí.
+        </p>
+      </div>
+
       <div className="bf-st-form">
         <label className="bf-assign-label" htmlFor={`st-desc-${c.numero}`}>Descripción del ticket</label>
         <textarea
@@ -2576,7 +2644,7 @@ function TarjetaSinTicket({ c, ahora, onCrear, onDescartar }) {
           rows={3}
           value={descripcion}
           placeholder="No describió el problema: escribe qué necesita, por lo que se ve en la conversación o la foto."
-          onChange={(e) => setDescripcion(e.target.value)}
+          onChange={(e) => { setDescripcion(e.target.value); setDescTocada(true); }}
         />
         <div className="bf-st-fila">
           <input
@@ -2615,7 +2683,7 @@ function TarjetaSinTicket({ c, ahora, onCrear, onDescartar }) {
   );
 }
 
-function GestorSinTicket({ conversaciones, ahora, onCrear, onDescartar }) {
+function GestorSinTicket({ conversaciones, ahora, onCrear, onDescartar, onMensaje }) {
   if (!conversaciones.length) {
     return (
       <div className="bf-panel bf-empty">
@@ -2631,8 +2699,8 @@ function GestorSinTicket({ conversaciones, ahora, onCrear, onDescartar }) {
   return (
     <section className="bf-st-lista">
       {conversaciones.map((c) => (
-        <TarjetaSinTicket key={`${c.numero}-${c.ultimo_iso}`} c={c} ahora={ahora}
-                          onCrear={onCrear} onDescartar={onDescartar} />
+        <TarjetaSinTicket key={c.numero} c={c} ahora={ahora}
+                          onCrear={onCrear} onDescartar={onDescartar} onMensaje={onMensaje} />
       ))}
     </section>
   );
@@ -4476,6 +4544,12 @@ const CSS = `
 .bf-foto-cargando{display:block}
 .bf-st-form{display:flex;flex-direction:column;gap:8px}
 .bf-st-desc{min-height:72px}
+.bf-st-preguntar{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid ${C.border}}
+.bf-st-msg{flex:1;min-width:200px;min-height:44px}
+.bf-st-chip{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:${C.openBg};color:${C.openText};white-space:nowrap}
+.bf-st-chip.is-respondio{background:${C.naranja};color:#fff}
+.bf-bubble.is-ti{background:rgba(133,182,196,0.16);border-color:rgba(133,182,196,0.45)}
+.bf-bubble.is-ti .bf-bubble-author{color:${C.azulDark}}
 .bf-st-fila{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .bf-st-area{flex:1;min-width:140px;height:38px;padding:0 12px;border:1px solid ${C.borderStrong};border-radius:10px;font-family:inherit;font-size:13.5px;color:${C.text};background:#fff}
 .bf-st-area:focus{outline:none;border-color:${C.azulLight};box-shadow:0 0 0 3px rgba(133,182,196,0.18)}

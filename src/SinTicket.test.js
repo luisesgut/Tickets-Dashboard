@@ -31,6 +31,7 @@ beforeEach(() => {
     if (opts.method === "POST") posts.push({ url: u, body: opts.body ? JSON.parse(opts.body) : null });
     const json = u.includes("/auth/yo") ? { nombre: "Luis", rol: "admin", es_ti: true }
       : u.includes("/sin-ticket/") && u.endsWith("/ticket") ? { ok: true, ticket: { id: "BFX-0117" } }
+      : u.includes("/sin-ticket/") && u.endsWith("/mensaje") ? { ok: true }
       : u.includes("/sin-ticket/") ? { ok: true }
       : u.includes("/sin-ticket") ? { conversaciones, total: conversaciones.length }
       : u.includes("/tickets/version") ? { v: "1" }
@@ -79,4 +80,23 @@ test("el conteo de «Resueltos» es el mismo que la lista, no solo los de hoy", 
   render(<App />);
   const resueltos = (await screen.findByText("Resueltos", { selector: ".bf-cola-label" })).closest("button");
   await waitFor(() => expect(resueltos.querySelector(".bf-cola-count").textContent).toBe("1"));
+});
+
+test("se le puede preguntar ahí mismo; los mensajes de TI se ven con su nombre", async () => {
+  conversaciones = [{ ...CONV, ti_conversa: true, mensajes: [...CONV.mensajes,
+    { role: "assistant", content: "[Irving] ¿Qué programa es?", fecha: "19/11/2026 10:40", fecha_iso: "2026-11-19T16:40:00Z" },
+    { role: "user", content: "Es Packz, pide licencia", fecha: "19/11/2026 10:41", fecha_iso: "2026-11-19T16:41:00Z" },
+  ] }];
+  render(<App />);
+  fireEvent.click(await botonSinTicket());
+  expect(await screen.findByText("¿Qué programa es?")).toBeInTheDocument();
+  expect(screen.getByText(/Irving · TI/)).toBeInTheDocument();
+  expect(screen.getByText("Respondió")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Preguntarle por WhatsApp"), { target: { value: "¿Desde cuándo?" } });
+  fireEvent.click(screen.getByRole("button", { name: /Enviar/ }));
+  await waitFor(() => expect(posts).toContainEqual({
+    url: expect.stringContaining("/sin-ticket/5214771262872/mensaje"),
+    body: { texto: "¿Desde cuándo?", actor: "Luis" },
+  }));
 });

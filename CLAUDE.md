@@ -262,6 +262,11 @@ Consequences to keep in mind when editing:
   is «(No describió el problema)», and *Crear ticket* stays disabled until there is one) and area.
   *Crear ticket* → `POST /sin-ticket/{numero}/ticket` with `actor = bf_nombre`, then jumps to the
   new ticket in «Sin atender» to assign it. *Descartar* (confirm) hides it until they write again.
+- *Preguntarle por WhatsApp* box on each card (`POST /sin-ticket/{numero}/mensaje`, Cmd/Ctrl+Enter):
+  IT asks what's missing; the bot stays quiet until the ticket is created. IT lines (`[Irving] …`,
+  `deTI()`) render as «Irving · TI» bubbles; chips «Esperando su respuesta» / «Respondió», and a
+  browser notification when someone replies. Cards are keyed by number, and the description keeps
+  following `descripcion_sugerida` until IT edits it.
 - Old backend without the endpoint: `r.ok` false → the list just stays empty.
 - Tests: `SinTicket.test.js`.
 
