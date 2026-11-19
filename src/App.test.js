@@ -80,6 +80,7 @@ test("la barra lateral filtra por cola, área y muestra la carga del equipo", as
   expect(filas).toEqual([
     ["Sin atender", "2"], ["En progreso", "1"],
     ["Esperando al usuario", "1"], ["Resueltos", "1"],
+    ["Sin ticket", "0"],
   ]);
 
   // "Sin atender" arranca enfocado y marcado como urgente

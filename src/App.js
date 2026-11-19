@@ -65,6 +65,7 @@ const ultimoMensaje = (t) => {
 
 // Cada cuánto se le pregunta al centinela si algo cambió.
 const POLL_MS = 10000;
+const SIN_TICKET_MS = 60000;
 
 /* ── Antigüedad de un ticket ──────────────────────────────────────
    `fecha_iso` viene en UTC desde el backend (Ticket.fecha usa utcnow).
@@ -122,14 +123,6 @@ const estadoCompromiso = (t, ahora = Date.now()) => {
   return t.fecha_compromiso === hoy ? "hoy" : "pendiente";
 };
 
-
-const esDeHoy = (iso) => {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const hoy = new Date();
-  return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth()
-    && d.getDate() === hoy.getDate();
-};
 
 /* ── Grupos de la cola de trabajo ─────────────────────────────────
    Cada ticket cae en exactamente uno; el orden de los ifs es la regla. */
@@ -545,7 +538,10 @@ function App() {
   );
 
   // ── Estado del dashboard ─────────────────────────────────────
-  const [vista, setVista] = useState("tickets"); // "tickets" | "uso" | "cuentas" | "config"
+  const [vista, setVista] = useState("tickets"); // "tickets" | "sin_ticket" | "uso" | "cuentas" | "config"
+  // Conversaciones que se quedaron sin ticket (la persona ya no contestó al bot)
+  const [sinTicket, setSinTicket] = useState([]);
+  const prevSinTicket = useRef(null); // números vistos, para avisar de los nuevos
   const [tickets, setTickets] = useState({});
   const [agentes, setAgentes] = useState({});
   const [selectedId, setSelectedId] = useState(null);
@@ -843,6 +839,69 @@ function App() {
   };
 
   // ── Data fetching ────────────────────────────────────────────
+  // /tickets pagina de a 200 (más nuevos primero): pasando de 200 tickets los
+  // viejos se caían del listado sin aviso y los contadores mentían. Se piden
+  // todas las páginas.
+  const traerTodosLosTickets = async (headers) => {
+    const pedir = (page) => fetch(`${API}/tickets?limit=500&page=${page}`, { headers }).then((r) => r.json());
+    const primera = await pedir(1);
+    if (!primera?.tickets) return primera; // backend viejo: el dict tal cual
+    const todos = { ...primera.tickets };
+    for (let page = 2; page <= (primera.pages || 1); page++) {
+      Object.assign(todos, (await pedir(page)).tickets || {});
+    }
+    return { ...primera, tickets: todos };
+  };
+
+  const fetchSinTicket = async () => {
+    const t = localStorage.getItem("bf_token");
+    if (!t) return;
+    try {
+      const r = await fetch(`${API}/sin-ticket`, { headers: { Authorization: `Bearer ${t}` } });
+      if (!r.ok) return; // backend sin esta sección todavía
+      const lista = (await r.json()).conversaciones || [];
+      // Igual que con un ticket nuevo: aviso del navegador para las que acaban de aparecer
+      if (prevSinTicket.current && notifGranted.current) {
+        lista.filter((c) => !prevSinTicket.current.has(c.numero)).forEach((c) => {
+          new Notification("Conversación sin ticket", {
+            body: `${c.nombre || c.numero} le escribió al bot y se quedó sin ticket`,
+            icon: "/favicon.ico",
+            tag: `sin-ticket-${c.numero}`,
+          });
+        });
+      }
+      prevSinTicket.current = new Set(lista.map((c) => c.numero));
+      setSinTicket(lista);
+    } catch (e) {
+      console.error("Error al cargar «Sin ticket»", e);
+    }
+  };
+
+  const crearDesdeConversacion = async (numero, descripcion, area) => {
+    const t = localStorage.getItem("bf_token");
+    const r = await fetch(`${API}/sin-ticket/${encodeURIComponent(numero)}/ticket`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+      body: JSON.stringify({ descripcion, area, actor: localStorage.getItem("bf_nombre") || "TI" }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!data.ok) return data;
+    await fetchData();
+    // Al ticket recién creado, en la cola, para asignarlo como cualquier otro
+    setVista("tickets");
+    setFiltro("sin_atender");
+    setSelectedId(data.ticket.id);
+    return data;
+  };
+
+  const descartarConversacion = async (numero) => {
+    const t = localStorage.getItem("bf_token");
+    await fetch(`${API}/sin-ticket/${encodeURIComponent(numero)}/descartar`, {
+      method: "POST", headers: { Authorization: `Bearer ${t}` },
+    });
+    await fetchSinTicket();
+  };
+
   const fetchData = async () => {
     const currentToken = localStorage.getItem("bf_token");
     if (!currentToken) return;
@@ -850,7 +909,7 @@ function App() {
     try {
       const headers = { Authorization: `Bearer ${currentToken}` };
       const [ticketsRes, agentesRes, versionRes] = await Promise.all([
-        fetch(`${API}/tickets`, { headers }).then((r) => r.json()),
+        traerTodosLosTickets(headers),
         fetch(`${API}/agentes`, { headers }).then((r) => r.json()),
         fetch(`${API}/tickets/version`, { headers }).then((r) => r.json()).catch(() => null),
       ]);
@@ -880,6 +939,7 @@ function App() {
       // refresca su detalle para que la conversación siga llegando en vivo.
       const abierto = selectedIdRef.current;
       if (abierto && nuevosTickets[abierto]) await fetchTicketDetalle(abierto);
+      fetchSinTicket();
     } catch (e) {
       console.error("Error al sincronizar", e);
     } finally {
@@ -966,6 +1026,8 @@ function App() {
 
     fetchData(); // carga inicial completa (también fija versionRef)
     const interval = setInterval(revisar, POLL_MS);
+    // El centinela solo cubre tickets: lo que se queda sin ticket se revisa aparte
+    const intervalSinTicket = setInterval(() => { if (!document.hidden) fetchSinTicket(); }, SIN_TICKET_MS);
     // Al volver a la pestaña, revisar de inmediato en vez de esperar el tick.
     const alVolver = () => { if (!document.hidden) revisar(); };
     document.addEventListener("visibilitychange", alVolver);
@@ -973,6 +1035,7 @@ function App() {
     return () => {
       vivo = false;
       clearInterval(interval);
+      clearInterval(intervalSinTicket);
       document.removeEventListener("visibilitychange", alVolver);
     };
   }, [autenticado, esTI]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -991,7 +1054,6 @@ function App() {
     const porGrupo = { sin_atender: [], en_progreso: [], esperando: [], resueltos: [] };
     const porArea = {};
     const porAgente = {};
-    let resueltosHoy = 0;
 
     arr.forEach((t) => {
       porGrupo[grupoDe(t)].push(t);
@@ -999,8 +1061,6 @@ function App() {
         const a = t.area || "Sin área";
         porArea[a] = (porArea[a] || 0) + 1;
         if (t.asignado_a) porAgente[t.asignado_a] = (porAgente[t.asignado_a] || 0) + 1;
-      } else if (esDeHoy(t.fecha_cierre_iso)) {
-        resueltosHoy += 1;
       }
     });
 
@@ -1011,7 +1071,7 @@ function App() {
     porGrupo.resueltos.sort((a, b) =>
       String(b.fecha_cierre_iso || "").localeCompare(String(a.fecha_cierre_iso || "")));
 
-    return { porGrupo, porArea, porAgente, resueltosHoy };
+    return { porGrupo, porArea, porAgente };
   }, [arr, ahora]);
 
   // Búsqueda y filtro de área se aplican a los cuatro grupos por igual.
@@ -1182,7 +1242,10 @@ function App() {
         <div className="bf-side-label" style={{ paddingTop: 4 }}>Cola de trabajo</div>
         <nav className="bf-cola">
           {GRUPOS.map((g) => {
-            const n = g.id === "resueltos" ? cola.resueltosHoy : cola.porGrupo[g.id].length;
+            // El mismo número que muestra la lista al abrir el grupo. «Resueltos»
+            // mostraba solo los cerrados HOY (y archivar contaba como resolver):
+            // decía 1 y la lista tenía 61.
+            const n = cola.porGrupo[g.id].length;
             const activo = vista === "tickets" && filtro === g.id;
             const urgente = g.id === "sin_atender" && n > 0;
             return (
@@ -1197,6 +1260,15 @@ function App() {
               </button>
             );
           })}
+          <button
+            className={`bf-cola-item${vista === "sin_ticket" ? " is-active" : ""}${sinTicket.length ? " is-urgente" : ""}`}
+            onClick={() => setVista("sin_ticket")}
+            title="Le escribieron al bot y se quedaron sin ticket"
+          >
+            <span className="bf-cola-dot" style={{ background: C.rojo }} />
+            <span className="bf-cola-label">Sin ticket</span>
+            <span className="bf-cola-count">{sinTicket.length}</span>
+          </button>
         </nav>
 
         {/* Filtro por área: usa el dato que el bot captura antes de crear el ticket */}
@@ -1302,6 +1374,7 @@ function App() {
           <div>
             <h1 className="bf-title">
               {vista === "config" ? "Configuración"
+                : vista === "sin_ticket" ? "Sin ticket"
                 : vista === "cuentas" ? "Cuentas"
                 : vista === "uso" ? "Uso"
                 : (TITULOS[filtro] || "Cola de trabajo")}
@@ -1309,6 +1382,8 @@ function App() {
             <p className="bf-subtitle">
               {vista === "config"
                 ? "Agentes de soporte y whitelist de usuarios"
+                : vista === "sin_ticket"
+                ? "Le escribieron al bot y ya no contestaron: no se creó ticket"
                 : vista === "cuentas"
                 ? "Quién entra al portal, con qué área y qué rol"
                 : vista === "uso"
@@ -1346,7 +1421,14 @@ function App() {
         </header>
 
         {/* Workspace */}
-        {vista === "uso" && perfil?.rol === "admin" ? (
+        {vista === "sin_ticket" ? (
+          <GestorSinTicket
+            conversaciones={sinTicket}
+            ahora={ahora}
+            onCrear={crearDesdeConversacion}
+            onDescartar={descartarConversacion}
+          />
+        ) : vista === "uso" && perfil?.rol === "admin" ? (
           <GestorUso />
         ) : vista === "cuentas" && perfil?.rol === "admin" ? (
           <GestorCuentas miUsuario={perfil?.usuario} />
@@ -2392,6 +2474,167 @@ function BarrasPorDia({ titulo, datos, series, detalle }) {
         </>
       )}
     </figure>
+  );
+}
+
+/* «Sin ticket» ─────────────────────────────────────────────────────
+   Alguien le escribió al bot, el bot le preguntó algo y ya no contestó: no
+   hay ticket y nadie se enteraba. Aquí TI lee la conversación y, si era algo,
+   la vuelve ticket: entra a la cola como cualquier otro (aviso a todo TI,
+   «Sin atender», se asigna igual) y al usuario le llega su folio. */
+
+// Foto de /imagenes/{id}: pide token, así que no sirve un <img src> directo.
+function FotoAuth({ id, alt, className, onClick }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    let vivo = true, creada = null;
+    fetch(`${API}/imagenes/${id}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("bf_token")}` },
+    })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => { if (b && vivo) { creada = URL.createObjectURL(b); setUrl(creada); } })
+      .catch(() => {});
+    return () => { vivo = false; if (creada) URL.revokeObjectURL(creada); };
+  }, [id]);
+  return url ? <img src={url} alt={alt} className={className} onClick={onClick} />
+             : <div className={`${className} bf-foto-cargando`} />;
+}
+
+const SIN_DESCRIPCION = "(No describió el problema)";
+
+function TarjetaSinTicket({ c, ahora, onCrear, onDescartar }) {
+  const sugerida = c.descripcion_sugerida === SIN_DESCRIPCION ? "" : (c.descripcion_sugerida || "");
+  const [descripcion, setDescripcion] = useState(sugerida);
+  const [area, setArea] = useState(c.area || "");
+  const [error, setError] = useState("");
+  const [foto, setFoto] = useState(null);
+  const hace = textoEdad(edadMs({ fecha_iso: c.ultimo_iso }, ahora));
+
+  const crear = async () => {
+    setError("");
+    const r = await onCrear(c.numero, descripcion.trim(), area.trim());
+    if (!r?.ok) setError(r?.error || "No se pudo crear el ticket.");
+  };
+
+  return (
+    <article className="bf-panel bf-st-card">
+      <header className="bf-st-head">
+        <span className="bf-avatar" style={{ background: colorPara(c.numero) }}>
+          {iniciales(c.nombre || "?")}
+        </span>
+        <div className="bf-st-quien">
+          <div className="bf-st-nombre">{c.nombre || "Sin nombre"}</div>
+          <div className="bf-st-sub">
+            <IcWhatsApp size={12} /> {c.numero}
+            {c.area && <> · {c.area}</>}
+            {" · "}
+            <span className={c.con_cuenta ? "bf-st-cuenta" : "bf-st-sincuenta"}>
+              {c.con_cuenta ? "con cuenta" : "sin cuenta"}
+            </span>
+          </div>
+        </div>
+        <span className="bf-st-hace" title={c.ultimo_iso}>último mensaje hace {hace}</span>
+      </header>
+
+      <div className="bf-chat bf-scroll bf-st-chat">
+        {c.mensajes.map((m, i) => {
+          const isUser = m.role === "user";
+          return (
+            <div key={i} className={`bf-msg-row ${isUser ? "is-user" : "is-bot"}`}>
+              <div className={`bf-bubble ${isUser ? "is-user" : "is-bot"}`}>
+                <span className="bf-bubble-author">
+                  {isUser ? "Empleado" : "Bot Bioflex"} · {m.fecha.slice(0, 5)} {m.fecha.slice(-5)}
+                </span>
+                <WaText text={m.content} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {c.fotos.length > 0 && (
+        <div className="bf-st-fotos">
+          {c.fotos.map((f) => (
+            <FotoAuth key={f.id} id={f.id} alt="Foto que mandó" className="bf-st-foto"
+                      onClick={() => setFoto(f)} />
+          ))}
+        </div>
+      )}
+      {foto && (
+        <div className="bf-lightbox" onClick={() => setFoto(null)}>
+          <button className="bf-lightbox-close" onClick={() => setFoto(null)}><IcX size={22} /></button>
+          <FotoAuth id={foto.id} alt="Foto" className="bf-lightbox-img" onClick={(e) => e.stopPropagation()} />
+          {foto.analisis && <div className="bf-lightbox-caption" onClick={(e) => e.stopPropagation()}>{foto.analisis}</div>}
+        </div>
+      )}
+
+      <div className="bf-st-form">
+        <label className="bf-assign-label" htmlFor={`st-desc-${c.numero}`}>Descripción del ticket</label>
+        <textarea
+          id={`st-desc-${c.numero}`}
+          className="bf-notas-area bf-st-desc"
+          rows={3}
+          value={descripcion}
+          placeholder="No describió el problema: escribe qué necesita, por lo que se ve en la conversación o la foto."
+          onChange={(e) => setDescripcion(e.target.value)}
+        />
+        <div className="bf-st-fila">
+          <input
+            className="bf-st-area"
+            placeholder="Área (opcional)"
+            value={area}
+            onChange={(e) => setArea(e.target.value)}
+            aria-label="Área"
+          />
+          <BotonAccion
+            className="bf-st-descartar"
+            onClick={() => onDescartar(c.numero)}
+            confirmar="¿Descartar esta conversación? Si vuelve a escribir, aparece de nuevo."
+            cargandoTexto="Descartando…"
+          >
+            Descartar
+          </BotonAccion>
+          <BotonAccion
+            className="bf-st-crear"
+            onClick={crear}
+            disabled={!descripcion.trim()}
+            cargandoTexto="Creando…"
+            title={descripcion.trim() ? "Entra a «Sin atender» y le llega el aviso a todo TI"
+                                      : "Escribe la descripción primero"}
+          >
+            <IcPlus size={15} /> Crear ticket
+          </BotonAccion>
+        </div>
+        {error && <p className="bf-msg-err">{error}</p>}
+        <p className="bf-msg-ayuda">
+          Al crearlo entra a <b>Sin atender</b> como cualquier ticket: a todo TI le llega el aviso
+          y al usuario su folio por WhatsApp. <b>Descartar</b> la quita de aquí (pruebas, un «hola» suelto).
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function GestorSinTicket({ conversaciones, ahora, onCrear, onDescartar }) {
+  if (!conversaciones.length) {
+    return (
+      <div className="bf-panel bf-empty">
+        <div className="bf-empty-ic"><IcCheckCircle size={26} /></div>
+        <p className="bf-empty-title">Nadie se quedó sin ticket</p>
+        <p className="bf-empty-text">
+          Aquí aparece quien le escribe al bot y deja de contestar antes de que se cree su ticket
+          (los últimos 7 días).
+        </p>
+      </div>
+    );
+  }
+  return (
+    <section className="bf-st-lista">
+      {conversaciones.map((c) => (
+        <TarjetaSinTicket key={`${c.numero}-${c.ultimo_iso}`} c={c} ahora={ahora}
+                          onCrear={onCrear} onDescartar={onDescartar} />
+      ))}
+    </section>
   );
 }
 
@@ -4218,6 +4461,31 @@ const CSS = `
 .bf-cfg-toggle{display:flex;align-items:center;gap:6px;font-size:13px;color:${C.textMuted};cursor:pointer}
 /* ── Uso ── */
 .bf-uso{display:flex;flex-direction:column;gap:16px}
+.bf-st-lista{display:flex;flex-direction:column;gap:16px;max-width:860px}
+.bf-st-card{padding:18px 20px}
+.bf-st-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.bf-st-quien{flex:1;min-width:0}
+.bf-st-nombre{font-size:15px;font-weight:700;color:${C.azulDark}}
+.bf-st-sub{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:12.5px;color:${C.textMuted};margin-top:2px}
+.bf-st-cuenta{color:${C.doneText};font-weight:600}
+.bf-st-sincuenta{color:${C.naranja};font-weight:600}
+.bf-st-hace{font-size:12px;color:${C.textFaint};white-space:nowrap}
+.bf-st-chat{max-height:340px;margin-bottom:14px}
+.bf-st-fotos{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.bf-st-foto{width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid ${C.border};cursor:zoom-in;background:${C.surfaceAlt}}
+.bf-foto-cargando{display:block}
+.bf-st-form{display:flex;flex-direction:column;gap:8px}
+.bf-st-desc{min-height:72px}
+.bf-st-fila{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bf-st-area{flex:1;min-width:140px;height:38px;padding:0 12px;border:1px solid ${C.borderStrong};border-radius:10px;font-family:inherit;font-size:13.5px;color:${C.text};background:#fff}
+.bf-st-area:focus{outline:none;border-color:${C.azulLight};box-shadow:0 0 0 3px rgba(133,182,196,0.18)}
+.bf-st-crear,.bf-st-descartar{height:38px;padding:0 16px;border-radius:10px;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.bf-st-crear{border:none;background:${C.naranja};color:#fff}
+.bf-st-crear:hover:not(:disabled){filter:brightness(1.08)}
+.bf-st-crear:disabled{opacity:.45;cursor:default}
+.bf-st-descartar{border:1px solid ${C.borderStrong};background:#fff;color:${C.textMuted}}
+.bf-st-descartar:hover:not(:disabled){border-color:${C.textMuted};color:${C.text}}
+@media (max-width:720px){.bf-st-card{padding:14px}.bf-st-hace{width:100%}.bf-st-fila > *{flex:1 1 auto}}
 .bf-uso-filtros{display:inline-flex;align-self:flex-start;padding:4px;border-radius:12px;background:${C.border}}
 .bf-uso-periodo{height:34px;padding:0 14px;border:none;border-radius:9px;background:transparent;color:#4A6361;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
 .bf-uso-periodo[aria-selected="true"]{background:#fff;color:${C.azulDark};box-shadow:0 1px 3px rgba(21,62,62,.12)}

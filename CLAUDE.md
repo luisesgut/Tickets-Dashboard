@@ -250,6 +250,29 @@ Consequences to keep in mind when editing:
 - `prevTicketIds` — Set of ticket IDs from last poll (for new-ticket detection)
 - `initialLoadDone` — bool; prevents notifications on first load
 
+### «Sin ticket» (2026-11-19, Luis)
+
+- Last item of the queue in the sidebar (red dot, orange count when > 0): conversations where
+  someone wrote to the bot and stopped answering before a ticket existed. `GET /sin-ticket`,
+  refreshed on every `fetchData()` and every `SIN_TICKET_MS` (60 s, paused when hidden; the
+  `/tickets/version` sentinel doesn't cover it). A browser notification fires for new ones, like
+  new tickets.
+- `GestorSinTicket` / `TarjetaSinTicket`: the conversation, its photos (`FotoAuth` — `/imagenes`
+  needs the token), an editable description (prefilled with `descripcion_sugerida`; empty when it
+  is «(No describió el problema)», and *Crear ticket* stays disabled until there is one) and area.
+  *Crear ticket* → `POST /sin-ticket/{numero}/ticket` with `actor = bf_nombre`, then jumps to the
+  new ticket in «Sin atender» to assign it. *Descartar* (confirm) hides it until they write again.
+- Old backend without the endpoint: `r.ok` false → the list just stays empty.
+- Tests: `SinTicket.test.js`.
+
+### Queue counts (2026-11-19)
+
+- The sidebar count of **Resueltos** is now the same number as the list (`porGrupo.resueltos.length`).
+  It used to show `resueltosHoy` — tickets whose `fecha_cierre` was today, and *archiving* rewrites
+  `fecha_cierre`, so it counted "archived today", not "resolved today": it said 1 while the list had 61.
+- `traerTodosLosTickets()` asks `/tickets?limit=500` and every page: with the old single request,
+  past 200 tickets the oldest silently fell out of the list and every count.
+
 ### Resolving from the detail (2026-11-11, Luis)
 
 - **State buttons sit right under the header** (`.bf-transitions`), not at the bottom after notes
